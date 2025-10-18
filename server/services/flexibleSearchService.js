@@ -1,94 +1,42 @@
 const { searchFlightsWithProgress } = require('./browserbaseService');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// Timeout configuration
-const MINION_TIMEOUT_MS = 60000; // 1 minute timeout
-const MAX_RETRIES = 1; // 1 retry per failed minion
-
 /**
- * Run a search with timeout protection
+ * Run a search - no timeout, let it run as long as needed
  */
-async function searchWithTimeout(searchParams, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      reject(new Error(`Minion timed out after ${timeoutMs / 1000} seconds`));
-    }, timeoutMs);
-
-    searchFlightsWithProgress(searchParams)
-      .then(result => {
-        clearTimeout(timeoutId);
-        resolve(result);
-      })
-      .catch(err => {
-        clearTimeout(timeoutId);
-        reject(err);
-      });
-  });
-}
-
-/**
- * Run a search with retry logic
- */
-async function searchWithRetry({ 
+async function runSearch({ 
   departureAirport, 
   arrivalAirport, 
   departureDate, 
   returnDate,
   minionId,
-  onProgress,
-  maxRetries = MAX_RETRIES
+  onProgress
 }) {
-  let lastError = null;
-  
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const isRetry = attempt > 0;
-      
-      if (isRetry) {
-        console.log(`[Minion ${minionId}] Retry attempt ${attempt}/${maxRetries}`);
-        onProgress({
-          status: 'retrying',
-          message: `Retrying search (attempt ${attempt + 1}/${maxRetries + 1})...`,
-          minionId,
-          departureDate,
-          returnDate,
-          attempt
-        });
-      }
+  try {
+    const result = await searchFlightsWithProgress({
+      departureAirport,
+      arrivalAirport,
+      departureDate,
+      returnDate,
+      onProgress
+    });
 
-      const result = await searchWithTimeout({
-        departureAirport,
-        arrivalAirport,
-        departureDate,
-        returnDate,
-        onProgress
-      }, MINION_TIMEOUT_MS);
-
-      return result; // Success!
-      
-    } catch (error) {
-      lastError = error;
-      console.error(`[Minion ${minionId}] Attempt ${attempt + 1} failed:`, error.message);
-      
-      if (attempt < maxRetries) {
-        // Will retry
-        continue;
-      } else {
-        // Final failure
-        onProgress({
-          status: 'minion_failed',
-          message: `Search failed after ${maxRetries + 1} attempts`,
-          minionId,
-          departureDate,
-          returnDate,
-          error: error.message
-        });
-        throw error;
-      }
-    }
+    return result; // Success!
+    
+  } catch (error) {
+    console.error(`[Minion ${minionId}] Search failed:`, error.message);
+    
+    // Send failure notification
+    onProgress({
+      status: 'minion_failed',
+      message: `Search failed: ${error.message}`,
+      minionId,
+      departureDate,
+      returnDate,
+      error: error.message
+    });
+    throw error;
   }
-  
-  throw lastError;
 }
 
 /**
@@ -287,7 +235,7 @@ async function runFlexibleSearch({
     
     const results = await Promise.allSettled(
       batch.map(({ combo, minionId, handler }) =>
-        searchWithRetry({
+        runSearch({
           departureAirport,
           arrivalAirport,
           departureDate: combo.departureDate,
