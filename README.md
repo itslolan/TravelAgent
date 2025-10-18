@@ -220,6 +220,24 @@ For issues related to:
 - **BrowserBase**: Visit [browserbase.com/docs](https://docs.browserbase.com)
 - **This Application**: Open an issue in the repository
 
+## 🚀 Deployment
+
+Ready to deploy your app? Check out these guides:
+
+- **Quick Deploy (5 min)**: See `QUICK_DEPLOY.md` for step-by-step Render deployment
+- **Full Guide**: See `DEPLOYMENT_GUIDE.md` for multiple deployment options
+- **Summary**: See `DEPLOYMENT_SUMMARY.md` for what's configured
+
+**Recommended Platform**: [Render](https://render.com) - Free tier available!
+
+### Quick Deploy Steps:
+1. Push to GitHub
+2. Connect to Render
+3. Set environment variables
+4. Deploy!
+
+Your app will be live at: `https://your-app.onrender.com` 🎉
+
 ---
 
-Built with ❤️ using React, Express, and BrowserBase
+Built with ❤️ using React, Express, BrowserBase, and Gemini 2.0
