@@ -1,6 +1,8 @@
 const { chromium } = require('playwright');
 const axios = require('axios');
-const { runGeminiAgentLoop, checkPageReadiness } = require('./geminiComputerUse');
+const { runGeminiAgentLoop, checkPageReadiness, solveCaptchaWithGemini } = require('./geminiComputerUse');
+const { solveCaptchaWithPythonService } = require('./geminiPythonService');
+const { searchMonitor } = require('./searchMonitor');
 
 /**
  * Get live view URL for a session using BrowserBase Live View API
@@ -61,8 +63,8 @@ async function createBrowserBaseSession() {
         proxies: true, // Enable BrowserBase managed residential proxies
         browserSettings: {
           viewport: {
-            width: 1280,
-            height: 720
+            width: 1440,  // Official Computer Use recommended dimensions
+            height: 900   // https://ai.google.dev/gemini-api/docs/computer-use
           }
         }
       },
@@ -153,58 +155,25 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
       timeout: 300000  // 5 minutes - allow plenty of time for slow loads
     });
 
-    console.log('Page loaded, using Gemini to check page readiness...');
+    console.log('Page loaded, registering with async search monitor...');
 
-    // Use Gemini to visually verify page state every 30 seconds
-    // NO MAX LIMIT - let it run as long as needed
-    let checkCount = 0;
-    let pageReady = false;
-    let lastState = null;
-
-    while (!pageReady) {
-      checkCount++;
-      console.log(`\n🔍 Gemini Check #${checkCount} - Analyzing page state...`);
-      
-      try {
-        const readinessCheck = await checkPageReadiness(page);
-        lastState = readinessCheck;
-        
-        console.log(`📊 Page State: ${readinessCheck.pageState}`);
-        console.log(`✓ Ready: ${readinessCheck.isReady}`);
-        console.log(`📈 Confidence: ${(readinessCheck.confidence * 100).toFixed(0)}%`);
-        console.log(`💭 Reasoning: ${readinessCheck.reasoning}`);
-        
-        if (readinessCheck.isReady && readinessCheck.pageState === 'results_ready') {
-          console.log('\n✅ Gemini confirmed: Flight results are ready!');
-          pageReady = true;
-          break;
-        }
-        
-        // Handle specific states
-        if (readinessCheck.pageState === 'captcha') {
-          console.log('⚠️  CAPTCHA detected by Gemini. Waiting for BrowserBase to solve it...');
-        } else if (readinessCheck.pageState === 'loading') {
-          console.log('⏳ Page still loading. Waiting...');
-        } else if (readinessCheck.pageState === 'error') {
-          console.log('❌ Error state detected. Will try to extract anyway...');
-          break; // Exit loop and try extraction
-        } else if (readinessCheck.pageState === 'no_results') {
-          console.log('📭 No results available for this search.');
-          break; // Exit loop, no point waiting
-        }
-        
-        // Wait 30 seconds before next check
-        if (!pageReady) {
-          console.log('⏰ Waiting 30 seconds before next check...');
-          await page.waitForTimeout(30000);
-        }
-        
-      } catch (error) {
-        console.error(`❌ Error during Gemini page check: ${error.message}`);
-        console.log('⚠️  Gemini check error, waiting 10s before retry...');
-        await page.waitForTimeout(10000); // Wait 10s before retry
-      }
-    }
+    // Generate unique search ID
+    const searchId = `search_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Register this search with the global monitor
+    // The monitor will check this search in parallel with others every 30s
+    searchMonitor.registerSearch(searchId, page, null);
+    
+    console.log(`✅ Search registered as ${searchId}`);
+    console.log('⏰ Monitor will check this search every 30 seconds (non-blocking)');
+    
+    // Wait for search to complete (non-blocking wait)
+    const result = await searchMonitor.waitForSearch(searchId, 1800000); // 30 min timeout
+    
+    console.log(`📊 Search ${searchId} monitoring complete:`, result);
+    
+    // Unregister the search
+    searchMonitor.unregisterSearch(searchId);
 
     // Small stabilization buffer
     console.log('\n🎯 Final stabilization...');
@@ -358,64 +327,27 @@ async function searchFlightsWithProgress({ departureAirport, arrivalAirport, dep
       timeout: 300000  // 5 minutes - allow plenty of time for slow loads
     });
 
-    console.log('Page loaded, using Gemini to check page readiness...');
-    onProgress({ status: 'loading', message: 'Checking if page is ready with AI vision...' });
+    console.log('Page loaded, registering with async search monitor...');
+    onProgress({ status: 'loading', message: 'Registering search with AI monitor...' });
 
-    // Use Gemini to visually verify page state every 30 seconds
-    // NO MAX LIMIT - let it run as long as needed
-    let checkCount = 0;
-    let pageReady = false;
-    let lastState = null;
-
-    while (!pageReady) {
-      checkCount++;
-      console.log(`\n🔍 Gemini Check #${checkCount} - Analyzing page state...`);
-      onProgress({ status: 'loading', message: `AI checking page state (check #${checkCount})...` });
-      
-      try {
-        const readinessCheck = await checkPageReadiness(page);
-        lastState = readinessCheck;
-        
-        console.log(`📊 Page State: ${readinessCheck.pageState}`);
-        console.log(`✓ Ready: ${readinessCheck.isReady}`);
-        console.log(`📈 Confidence: ${(readinessCheck.confidence * 100).toFixed(0)}%`);
-        console.log(`💭 Reasoning: ${readinessCheck.reasoning}`);
-        
-        if (readinessCheck.isReady && readinessCheck.pageState === 'results_ready') {
-          console.log('\n✅ Gemini confirmed: Flight results are ready!');
-          pageReady = true;
-          break;
-        }
-        
-        // Handle specific states
-        if (readinessCheck.pageState === 'captcha') {
-          console.log('⚠️  CAPTCHA detected by Gemini. Waiting for BrowserBase to solve it...');
-          onProgress({ status: 'loading', message: 'CAPTCHA detected, waiting for auto-solve...' });
-        } else if (readinessCheck.pageState === 'loading') {
-          console.log('⏳ Page still loading. Waiting...');
-          onProgress({ status: 'loading', message: 'Page still loading, waiting...' });
-        } else if (readinessCheck.pageState === 'error') {
-          console.log('❌ Error state detected. Will try to extract anyway...');
-          onProgress({ status: 'loading', message: 'Error detected, attempting extraction...' });
-          break; // Exit loop and try extraction
-        } else if (readinessCheck.pageState === 'no_results') {
-          console.log('📭 No results available for this search.');
-          onProgress({ status: 'loading', message: 'No flights found for this search.' });
-          break; // Exit loop, no point waiting
-        }
-        
-        // Wait 30 seconds before next check
-        if (!pageReady) {
-          console.log('⏰ Waiting 30 seconds before next check...');
-          await page.waitForTimeout(30000);
-        }
-        
-      } catch (error) {
-        console.error(`❌ Error during Gemini page check: ${error.message}`);
-        console.log('⚠️  Gemini check error, waiting 10s before retry...');
-        await page.waitForTimeout(10000); // Wait 10s before retry
-      }
-    }
+    // Generate unique search ID
+    const searchId = `search_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Register this search with the global monitor
+    // The monitor will check this search in parallel with others every 30s
+    searchMonitor.registerSearch(searchId, page, onProgress);
+    
+    console.log(`✅ Search registered as ${searchId}`);
+    console.log('⏰ Monitor will check this search every 30 seconds (non-blocking)');
+    onProgress({ status: 'loading', message: 'Search registered! Monitor checking every 30s...' });
+    
+    // Wait for search to complete (non-blocking wait)
+    const result = await searchMonitor.waitForSearch(searchId, 1800000); // 30 min timeout
+    
+    console.log(`📊 Search ${searchId} monitoring complete:`, result);
+    
+    // Unregister the search
+    searchMonitor.unregisterSearch(searchId)
 
     // Small stabilization buffer
     console.log('\n🎯 Final stabilization...');

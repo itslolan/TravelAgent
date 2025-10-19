@@ -1,9 +1,66 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const GEMINI_MODEL = 'gemini-2.0-flash-exp';
+// Official Gemini Computer Use model from documentation
+// https://ai.google.dev/gemini-api/docs/computer-use
+const GEMINI_COMPUTER_USE_MODEL = 'gemini-2.5-computer-use-preview-10-2025';
+const GEMINI_VISION_MODEL = 'gemini-2.0-flash-exp'; // For page readiness checks
 const MAX_ITERATIONS = 10;
-const SCREEN_WIDTH = 1280;
-const SCREEN_HEIGHT = 720;
+// Recommended screen size from documentation
+const SCREEN_WIDTH = 1440;
+const SCREEN_HEIGHT = 900;
+
+/**
+ * Use Gemini Computer Use to solve CAPTCHA
+ * Returns true if CAPTCHA was solved, false otherwise
+ */
+async function solveCaptchaWithGemini(page, onProgress) {
+  console.log('\n🤖 Attempting to solve CAPTCHA with Gemini Computer Use...');
+  
+  if (onProgress) {
+    onProgress({ 
+      status: 'solving_captcha', 
+      message: 'Using AI to solve CAPTCHA challenge...' 
+    });
+  }
+
+  const captchaTask = `You are looking at a CAPTCHA or bot verification challenge page.
+
+Your task is to solve the CAPTCHA and get past it to reach the actual content.
+
+Common CAPTCHA types:
+1. **reCAPTCHA checkbox**: Click the "I'm not a robot" checkbox
+2. **Image selection**: Select images matching a criteria (e.g., "Select all images with traffic lights")
+3. **Text CAPTCHA**: Type the displayed text
+4. **Security questions**: Answer questions to verify you're human
+
+Steps to solve:
+1. Identify what type of CAPTCHA is present
+2. Complete the required action (click checkbox, select images, type text, etc.)
+3. Submit or verify your answer
+4. Wait for the page to proceed to the actual content
+
+Important:
+- Be precise with clicks and text input
+- Wait a few seconds after each action for the page to respond
+- If the CAPTCHA fails, try again
+- Once the CAPTCHA is solved and the page loads, you're done
+
+Analyze the screenshot, solve the CAPTCHA, and help us reach the flight search results page.`;
+
+  try {
+    const result = await runGeminiAgentLoop({
+      page,
+      task: captchaTask,
+      onProgress
+    });
+    
+    console.log('✅ Gemini CAPTCHA solving attempt completed');
+    return true;
+  } catch (error) {
+    console.error('❌ Gemini failed to solve CAPTCHA:', error.message);
+    return false;
+  }
+}
 
 /**
  * Use Gemini to check if the flight results page is ready
@@ -12,7 +69,7 @@ const SCREEN_HEIGHT = 720;
 async function checkPageReadiness(page) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ 
-    model: GEMINI_MODEL,
+    model: GEMINI_VISION_MODEL,
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: {
@@ -82,100 +139,156 @@ Analyze the screenshot and return your assessment.`;
 }
 
 /**
- * Execute a Gemini Computer Use action using Playwright
+ * Denormalize x coordinate from 0-999 to actual pixel coordinate
+ * Per documentation: model outputs normalized coordinates regardless of input dimensions
  */
-async function executeAction(page, functionCall) {
+function denormalizeX(x, screenWidth) {
+  return Math.floor((x / 1000) * screenWidth);
+}
+
+/**
+ * Denormalize y coordinate from 0-999 to actual pixel coordinate
+ * Per documentation: model outputs normalized coordinates regardless of input dimensions
+ */
+function denormalizeY(y, screenHeight) {
+  return Math.floor((y / 1000) * screenHeight);
+}
+
+/**
+ * Execute a Gemini Computer Use action using Playwright
+ * Following official documentation: https://ai.google.dev/gemini-api/docs/computer-use
+ */
+async function executeAction(page, functionCall, screenWidth, screenHeight) {
   const { name, args } = functionCall;
   
-  console.log(`Executing action: ${name}`, args);
+  console.log(`  -> Executing: ${name}`, args);
   
   try {
     switch (name) {
+      case 'open_web_browser':
+        // Already open, no action needed
+        break;
+        
       case 'wait_5_seconds':
         await page.waitForTimeout(5000);
         break;
         
       case 'go_back':
-        await page.goBack();
+        await page.goBack({ waitUntil: 'networkidle', timeout: 5000 }).catch(() => {});
         break;
         
       case 'go_forward':
-        await page.goForward();
+        await page.goForward({ waitUntil: 'networkidle', timeout: 5000 }).catch(() => {});
         break;
         
       case 'navigate':
         await page.goto(args.url, { waitUntil: 'networkidle', timeout: 30000 });
         break;
         
-      case 'click_at':
-        await page.mouse.click(args.x, args.y);
+      case 'search':
+        // Navigate to search URL if provided
+        if (args.url) {
+          await page.goto(args.url, { waitUntil: 'networkidle', timeout: 30000 });
+        }
         break;
         
-      case 'hover_at':
-        await page.mouse.move(args.x, args.y);
+      case 'click_at': {
+        // Denormalize coordinates
+        const actualX = denormalizeX(args.x, screenWidth);
+        const actualY = denormalizeY(args.y, screenHeight);
+        console.log(`    Denormalized: (${args.x}, ${args.y}) -> (${actualX}, ${actualY})`);
+        await page.mouse.click(actualX, actualY);
         break;
+      }
         
-      case 'type_text_at':
+      case 'hover_at': {
+        const actualX = denormalizeX(args.x, screenWidth);
+        const actualY = denormalizeY(args.y, screenHeight);
+        console.log(`    Denormalized: (${args.x}, ${args.y}) -> (${actualX}, ${actualY})`);
+        await page.mouse.move(actualX, actualY);
+        break;
+      }
+        
+      case 'type_text_at': {
+        const actualX = denormalizeX(args.x, screenWidth);
+        const actualY = denormalizeY(args.y, screenHeight);
+        console.log(`    Denormalized: (${args.x}, ${args.y}) -> (${actualX}, ${actualY})`);
+        
         // Click at position first
-        await page.mouse.click(args.x, args.y);
+        await page.mouse.click(actualX, actualY);
         await page.waitForTimeout(500);
         
-        // Clear if needed
+        // Clear if needed (using Meta key for Mac, Control for others)
         if (args.clear_before_typing) {
-          await page.keyboard.press('Control+A');
+          await page.keyboard.press('Meta+A'); // Command+A on Mac
           await page.keyboard.press('Backspace');
         }
         
         // Type the text
-        await page.keyboard.type(args.text);
+        await page.keyboard.type(args.text, { delay: 50 });
         
         // Press enter if needed
         if (args.press_enter) {
           await page.keyboard.press('Enter');
         }
         break;
+      }
         
-      case 'key_combination':
+      case 'key_combination': {
         const keys = args.keys.split('+');
+        // Press down all keys
         for (const key of keys) {
           await page.keyboard.down(key);
         }
+        // Release all keys in reverse order
         for (const key of keys.reverse()) {
           await page.keyboard.up(key);
         }
         break;
+      }
         
-      case 'scroll_document':
+      case 'scroll_document': {
         const scrollAmount = args.direction === 'down' ? 500 : -500;
         await page.evaluate((amount) => {
           window.scrollBy(0, amount);
         }, scrollAmount);
         break;
+      }
         
-      case 'scroll_at':
-        await page.mouse.move(args.x, args.y);
+      case 'scroll_at': {
+        const actualX = denormalizeX(args.x, screenWidth);
+        const actualY = denormalizeY(args.y, screenHeight);
+        await page.mouse.move(actualX, actualY);
         const wheelDelta = args.direction === 'down' ? args.magnitude : -args.magnitude;
         await page.mouse.wheel(0, wheelDelta);
         break;
+      }
         
-      case 'drag_and_drop':
-        await page.mouse.move(args.x, args.y);
+      case 'drag_and_drop': {
+        const actualX = denormalizeX(args.x, screenWidth);
+        const actualY = denormalizeY(args.y, screenHeight);
+        const actualDestX = denormalizeX(args.destination_x, screenWidth);
+        const actualDestY = denormalizeY(args.destination_y, screenHeight);
+        
+        await page.mouse.move(actualX, actualY);
         await page.mouse.down();
-        await page.mouse.move(args.destination_x, args.destination_y);
+        await page.mouse.move(actualDestX, actualDestY, { steps: 10 });
         await page.mouse.up();
         break;
+      }
         
       default:
-        console.warn(`Unknown action: ${name}`);
-        return { success: false, error: `Unknown action: ${name}` };
+        console.warn(`    Warning: Unimplemented action ${name}`);
+        return { success: false, error: `Unimplemented action: ${name}` };
     }
     
-    // Wait a bit for the action to take effect
+    // Wait for potential navigations/renders (per documentation)
+    await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(1000);
     
     return { success: true };
   } catch (error) {
-    console.error(`Error executing action ${name}:`, error.message);
+    console.error(`    Error executing ${name}:`, error.message);
     return { success: false, error: error.message };
   }
 }
@@ -216,7 +329,7 @@ async function runGeminiAgentLoop({ page, task, onProgress }) {
   
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ 
-    model: GEMINI_MODEL,
+    model: GEMINI_COMPUTER_USE_MODEL,
     generationConfig: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -386,10 +499,10 @@ async function runGeminiAgentLoop({ page, task, onProgress }) {
           iteration: iteration + 1
         });
         
-        // Execute the action
-        const actionResult = await executeAction(page, functionCall);
+        // Execute the action with screen dimensions for denormalization
+        const actionResult = await executeAction(page, functionCall, SCREEN_WIDTH, SCREEN_HEIGHT);
         
-        // Capture new state
+        // Capture new state after action
         const newState = await captureState(page);
         
         // Send function response back to Gemini
@@ -446,5 +559,6 @@ module.exports = {
   runGeminiAgentLoop,
   executeAction,
   captureState,
-  checkPageReadiness
+  checkPageReadiness,
+  solveCaptchaWithGemini
 };
