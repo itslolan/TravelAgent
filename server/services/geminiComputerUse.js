@@ -6,6 +6,82 @@ const SCREEN_WIDTH = 1280;
 const SCREEN_HEIGHT = 720;
 
 /**
+ * Use Gemini to check if the flight results page is ready
+ * Returns structured JSON with page state
+ */
+async function checkPageReadiness(page) {
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ 
+    model: GEMINI_MODEL,
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'object',
+        properties: {
+          isReady: {
+            type: 'boolean',
+            description: 'Whether the flight results page is fully loaded and ready'
+          },
+          pageState: {
+            type: 'string',
+            enum: ['loading', 'captcha', 'error', 'results_ready', 'no_results', 'unknown'],
+            description: 'Current state of the page'
+          },
+          confidence: {
+            type: 'number',
+            description: 'Confidence level from 0 to 1'
+          },
+          reasoning: {
+            type: 'string',
+            description: 'Brief explanation of the assessment'
+          }
+        },
+        required: ['isReady', 'pageState', 'confidence', 'reasoning']
+      }
+    }
+  });
+
+  // Take screenshot as Buffer
+  const screenshotBuffer = await page.screenshot({ type: 'png' });
+
+  const prompt = `You are analyzing a flight search results page on Expedia.com.
+
+Your task is to determine if the page is ready for data extraction.
+
+Page States:
+- "loading": Page is still loading, showing spinners or loading indicators
+- "captcha": CAPTCHA or bot verification challenge is present (e.g., "Verify you are human", reCAPTCHA, security check)
+- "error": Error message displayed (e.g., "No flights found", "Something went wrong")
+- "results_ready": Flight results are fully loaded and visible with prices, airlines, and times
+- "no_results": Page loaded but shows "No flights available" or similar message
+- "unknown": Cannot determine the state
+
+Criteria for "results_ready" (isReady: true):
+1. Multiple flight options are visible (at least 2-3 flight cards)
+2. Each flight shows: airline name, price, departure/arrival times
+3. No loading spinners or "Loading..." text
+4. No CAPTCHA or verification challenges
+5. Page appears stable and complete
+
+Analyze the screenshot and return your assessment.`;
+
+  const result = await model.generateContent([
+    prompt,
+    {
+      inlineData: {
+        mimeType: 'image/png',
+        data: screenshotBuffer.toString('base64')
+      }
+    }
+  ]);
+
+  const response = result.response;
+  const jsonResponse = JSON.parse(response.text());
+  
+  return jsonResponse;
+}
+
+/**
  * Execute a Gemini Computer Use action using Playwright
  */
 async function executeAction(page, functionCall) {
@@ -369,5 +445,6 @@ async function runGeminiAgentLoop({ page, task, onProgress }) {
 module.exports = {
   runGeminiAgentLoop,
   executeAction,
-  captureState
+  captureState,
+  checkPageReadiness
 };

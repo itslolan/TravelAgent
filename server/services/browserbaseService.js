@@ -1,6 +1,6 @@
 const { chromium } = require('playwright');
 const axios = require('axios');
-const { runGeminiAgentLoop } = require('./geminiComputerUse');
+const { runGeminiAgentLoop, checkPageReadiness } = require('./geminiComputerUse');
 
 /**
  * Get live view URL for a session using BrowserBase Live View API
@@ -147,18 +147,68 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
 
     console.log('Navigating to Expedia:', expediaUrl);
 
-    // Navigate to Expedia search results
+    // Navigate to Expedia search results with extended timeout
     await page.goto(expediaUrl, { 
       waitUntil: 'networkidle',
-      timeout: 60000 
+      timeout: 300000  // 5 minutes - allow plenty of time for slow loads
     });
 
-    console.log('Page loaded, waiting for results...');
+    console.log('Page loaded, using Gemini to check page readiness...');
 
-    // Wait for flight results to load
-    await page.waitForSelector('[data-test-id="listing-main"]', { timeout: 30000 }).catch(() => {
-      console.log('Main listing container not found, trying alternative selectors...');
-    });
+    // Use Gemini to visually verify page state every 30 seconds
+    // NO MAX LIMIT - let it run as long as needed
+    let checkCount = 0;
+    let pageReady = false;
+    let lastState = null;
+
+    while (!pageReady) {
+      checkCount++;
+      console.log(`\n🔍 Gemini Check #${checkCount} - Analyzing page state...`);
+      
+      try {
+        const readinessCheck = await checkPageReadiness(page);
+        lastState = readinessCheck;
+        
+        console.log(`📊 Page State: ${readinessCheck.pageState}`);
+        console.log(`✓ Ready: ${readinessCheck.isReady}`);
+        console.log(`📈 Confidence: ${(readinessCheck.confidence * 100).toFixed(0)}%`);
+        console.log(`💭 Reasoning: ${readinessCheck.reasoning}`);
+        
+        if (readinessCheck.isReady && readinessCheck.pageState === 'results_ready') {
+          console.log('\n✅ Gemini confirmed: Flight results are ready!');
+          pageReady = true;
+          break;
+        }
+        
+        // Handle specific states
+        if (readinessCheck.pageState === 'captcha') {
+          console.log('⚠️  CAPTCHA detected by Gemini. Waiting for BrowserBase to solve it...');
+        } else if (readinessCheck.pageState === 'loading') {
+          console.log('⏳ Page still loading. Waiting...');
+        } else if (readinessCheck.pageState === 'error') {
+          console.log('❌ Error state detected. Will try to extract anyway...');
+          break; // Exit loop and try extraction
+        } else if (readinessCheck.pageState === 'no_results') {
+          console.log('📭 No results available for this search.');
+          break; // Exit loop, no point waiting
+        }
+        
+        // Wait 30 seconds before next check
+        if (!pageReady) {
+          console.log('⏰ Waiting 30 seconds before next check...');
+          await page.waitForTimeout(30000);
+        }
+        
+      } catch (error) {
+        console.error(`❌ Error during Gemini page check: ${error.message}`);
+        console.log('⚠️  Gemini check error, waiting 10s before retry...');
+        await page.waitForTimeout(10000); // Wait 10s before retry
+      }
+    }
+
+    // Small stabilization buffer
+    console.log('\n🎯 Final stabilization...');
+    await page.waitForTimeout(3000);
 
     // Extract flight information
     console.log('Extracting flight data...');
@@ -302,68 +352,77 @@ async function searchFlightsWithProgress({ departureAirport, arrivalAirport, dep
     console.log('Navigating to Expedia:', expediaUrl);
     onProgress({ status: 'navigating', message: 'Navigating to Expedia.com...' });
 
-    // Navigate to Expedia search results
+    // Navigate to Expedia search results with extended timeout
     await page.goto(expediaUrl, { 
       waitUntil: 'networkidle',
-      timeout: 60000 
+      timeout: 300000  // 5 minutes - allow plenty of time for slow loads
     });
 
-    console.log('Page loaded, waiting for flight results to appear...');
-    onProgress({ status: 'loading', message: 'Waiting for flight results to load...' });
+    console.log('Page loaded, using Gemini to check page readiness...');
+    onProgress({ status: 'loading', message: 'Checking if page is ready with AI vision...' });
 
-    // Wait for flight results to fully load
-    // Try multiple selectors that Expedia uses for flight listings
-    try {
-      await Promise.race([
-        page.waitForSelector('[data-test-id="listing-main"]', { timeout: 30000 }),
-        page.waitForSelector('.uitk-card-content-section', { timeout: 30000 }),
-        page.waitForSelector('[data-test-id="offer-listing"]', { timeout: 30000 }),
-        page.waitForSelector('.flight-card', { timeout: 30000 })
-      ]);
-      console.log('✅ Flight results container detected');
-    } catch (err) {
-      console.log('⚠️ Could not detect flight results container, proceeding anyway...');
+    // Use Gemini to visually verify page state every 30 seconds
+    // NO MAX LIMIT - let it run as long as needed
+    let checkCount = 0;
+    let pageReady = false;
+    let lastState = null;
+
+    while (!pageReady) {
+      checkCount++;
+      console.log(`\n🔍 Gemini Check #${checkCount} - Analyzing page state...`);
+      onProgress({ status: 'loading', message: `AI checking page state (check #${checkCount})...` });
+      
+      try {
+        const readinessCheck = await checkPageReadiness(page);
+        lastState = readinessCheck;
+        
+        console.log(`📊 Page State: ${readinessCheck.pageState}`);
+        console.log(`✓ Ready: ${readinessCheck.isReady}`);
+        console.log(`📈 Confidence: ${(readinessCheck.confidence * 100).toFixed(0)}%`);
+        console.log(`💭 Reasoning: ${readinessCheck.reasoning}`);
+        
+        if (readinessCheck.isReady && readinessCheck.pageState === 'results_ready') {
+          console.log('\n✅ Gemini confirmed: Flight results are ready!');
+          pageReady = true;
+          break;
+        }
+        
+        // Handle specific states
+        if (readinessCheck.pageState === 'captcha') {
+          console.log('⚠️  CAPTCHA detected by Gemini. Waiting for BrowserBase to solve it...');
+          onProgress({ status: 'loading', message: 'CAPTCHA detected, waiting for auto-solve...' });
+        } else if (readinessCheck.pageState === 'loading') {
+          console.log('⏳ Page still loading. Waiting...');
+          onProgress({ status: 'loading', message: 'Page still loading, waiting...' });
+        } else if (readinessCheck.pageState === 'error') {
+          console.log('❌ Error state detected. Will try to extract anyway...');
+          onProgress({ status: 'loading', message: 'Error detected, attempting extraction...' });
+          break; // Exit loop and try extraction
+        } else if (readinessCheck.pageState === 'no_results') {
+          console.log('📭 No results available for this search.');
+          onProgress({ status: 'loading', message: 'No flights found for this search.' });
+          break; // Exit loop, no point waiting
+        }
+        
+        // Wait 30 seconds before next check
+        if (!pageReady) {
+          console.log('⏰ Waiting 30 seconds before next check...');
+          await page.waitForTimeout(30000);
+        }
+        
+      } catch (error) {
+        console.error(`❌ Error during Gemini page check: ${error.message}`);
+        console.log('⚠️  Gemini check error, waiting 10s before retry...');
+        await page.waitForTimeout(10000); // Wait 10s before retry
+      }
     }
 
-    // Additional wait to ensure dynamic content is loaded
-    console.log('Waiting for dynamic content to stabilize...');
+    // Small stabilization buffer
+    console.log('\n🎯 Final stabilization...');
     await page.waitForTimeout(3000);
 
-    // Wait for any loading spinners to disappear
-    try {
-      await page.waitForSelector('.loading-spinner, [data-test-id="loading"]', { 
-        state: 'hidden', 
-        timeout: 10000 
-      });
-      console.log('✅ Loading indicators cleared');
-    } catch (err) {
-      console.log('No loading indicators found or already cleared');
-    }
-
-    // Verify that flight data is actually visible on the page
-    const hasFlightData = await page.evaluate(() => {
-      // Check if there are any price elements visible
-      const priceElements = document.querySelectorAll('[data-test-id*="price"], .price, [class*="price"]');
-      const hasVisiblePrices = Array.from(priceElements).some(el => {
-        const rect = el.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      });
-      
-      // Check if there are flight cards
-      const flightCards = document.querySelectorAll('[data-test-id*="listing"], .flight-card, .uitk-card');
-      const hasCards = flightCards.length > 0;
-      
-      return hasVisiblePrices || hasCards;
-    });
-
-    if (hasFlightData) {
-      console.log('✅ Flight data verified on page');
-    } else {
-      console.log('⚠️ Warning: Could not verify flight data on page, but proceeding...');
-    }
-
-    console.log('✅ Page fully loaded, starting Gemini Computer Use agent...');
-    onProgress({ status: 'loading', message: 'Page fully loaded, starting AI agent to analyze flight data...' });
+    console.log('✅ Page ready, starting Gemini Computer Use agent...');
+    onProgress({ status: 'loading', message: 'Page ready! Starting AI agent to extract flight data...' });
 
     // Use Gemini Computer Use to interact with the page
     const geminiTask = `You are looking at an Expedia flight search results page. 
