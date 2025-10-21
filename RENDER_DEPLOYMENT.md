@@ -55,11 +55,13 @@ After blueprint is applied, set these secrets:
 **For travelagent-captcha-solver:**
 - `GEMINI_API_KEY` = `your_gemini_api_key`
 
+**Note**: `PYTHON_CAPTCHA_SOLVER_HOST` is automatically set by Render from the Python service hostname.
+
 ### Step 4: Trigger Deploy
 
 1. Both services will deploy automatically
 2. Wait for builds to complete (~5-10 minutes)
-3. Python service URL will be auto-injected into Node.js service
+3. Python service hostname will be auto-injected into Node.js service as `PYTHON_CAPTCHA_SOLVER_HOST`
 
 ---
 
@@ -133,6 +135,8 @@ PYTHON_CAPTCHA_SOLVER_URL=https://travelagent-captcha-solver.onrender.com
 ```
 
 **Important**: Replace the Python service URL with your actual URL from Part A!
+
+**Note**: When using manual deployment, use `PYTHON_CAPTCHA_SOLVER_URL` (full URL). The backend supports both `PYTHON_CAPTCHA_SOLVER_URL` and `PYTHON_CAPTCHA_SOLVER_HOST` (from Blueprint).
 
 #### 3. Advanced Settings
 
@@ -247,7 +251,8 @@ Plan: Free (or Starter)
 - `BROWSERBASE_PROJECT_ID`
 - `GEMINI_API_KEY`
 - `USE_GEMINI_FOR_CAPTCHA=true`
-- `PYTHON_CAPTCHA_SOLVER_URL=https://your-captcha-solver.onrender.com`
+- `PYTHON_CAPTCHA_SOLVER_HOST` (auto-set by Blueprint) OR
+- `PYTHON_CAPTCHA_SOLVER_URL` (manual deployment)
 
 ---
 

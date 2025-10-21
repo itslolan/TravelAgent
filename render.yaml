@@ -22,12 +22,12 @@ services:
         sync: false
       - key: USE_GEMINI_FOR_CAPTCHA
         value: true
-      - key: PYTHON_CAPTCHA_SOLVER_URL
-        # This will be auto-populated with the Python service URL
+      - key: PYTHON_CAPTCHA_SOLVER_HOST
+        # Auto-populated with Python service hostname
         fromService:
           type: web
           name: travelagent-captcha-solver
-          property: url
+          property: host
     autoDeploy: true  # Auto-deploy on push to master
     healthCheckPath: /health
     

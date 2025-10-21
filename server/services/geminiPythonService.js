@@ -1,7 +1,19 @@
 const axios = require('axios');
 
 // Python microservice URL
-const PYTHON_SERVICE_URL = process.env.PYTHON_CAPTCHA_SOLVER_URL || 'http://localhost:5000';
+// Supports both full URL (PYTHON_CAPTCHA_SOLVER_URL) and hostname (PYTHON_CAPTCHA_SOLVER_HOST from Render)
+const getPythonServiceUrl = () => {
+  if (process.env.PYTHON_CAPTCHA_SOLVER_URL) {
+    return process.env.PYTHON_CAPTCHA_SOLVER_URL;
+  }
+  if (process.env.PYTHON_CAPTCHA_SOLVER_HOST) {
+    // Render provides hostname without protocol, add https://
+    return `https://${process.env.PYTHON_CAPTCHA_SOLVER_HOST}`;
+  }
+  return 'http://localhost:5000';
+};
+
+const PYTHON_SERVICE_URL = getPythonServiceUrl();
 const MAX_ITERATIONS = 15; // Increased to allow for carousel exploration
 const ITERATION_TIMEOUT = 25000; // 25 seconds per iteration (more time for assessment)
 
