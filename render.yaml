@@ -1,0 +1,51 @@
+# Render.com Blueprint Configuration
+# This file defines all services for automatic deployment
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  # Node.js Backend (Main App)
+  - type: web
+    name: travelagent-backend
+    runtime: node
+    plan: free  # Change to 'starter' for no cold starts
+    region: oregon  # or 'frankfurt', 'singapore', etc.
+    buildCommand: npm install && npm run build
+    startCommand: node server/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BROWSERBASE_API_KEY
+        sync: false  # Must be set manually in Render dashboard
+      - key: BROWSERBASE_PROJECT_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: USE_GEMINI_FOR_CAPTCHA
+        value: true
+      - key: PYTHON_CAPTCHA_SOLVER_URL
+        # This will be auto-populated with the Python service URL
+        fromService:
+          type: web
+          name: travelagent-captcha-solver
+          property: url
+    autoDeploy: true  # Auto-deploy on push to master
+    healthCheckPath: /health
+    
+  # Python CAPTCHA Solver Service
+  - type: web
+    name: travelagent-captcha-solver
+    runtime: python
+    plan: free  # Change to 'starter' for no cold starts
+    region: oregon  # Same region as backend for low latency
+    rootDir: python-captcha-solver  # Service runs from this subdirectory
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 captcha_solver:app
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false  # Must be set manually in Render dashboard
+      - key: FLASK_ENV
+        value: production
+      - key: PORT
+        value: 5000
+    autoDeploy: true  # Auto-deploy on push to master
+    healthCheckPath: /health

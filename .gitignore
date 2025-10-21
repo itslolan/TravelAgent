@@ -3,3 +3,11 @@ dist
 .env
 *.log
 .DS_Store
+
+# Python
+python-captcha-solver/venv/
+python-captcha-solver/__pycache__/
+python-captcha-solver/*.pyc
+*.pyo
+*.pyd
+.Python
