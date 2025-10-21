@@ -77,7 +77,11 @@ async function executeAction(page, action) {
       case 'hover_at':
         await page.mouse.move(args.x, args.y);
         break;
-        
+
+      case 'move_mouse':
+        await page.mouse.move(args.x, args.y);
+        break;
+
       case 'type_text_at':
         // Click at position first
         await page.mouse.click(args.x, args.y);
@@ -183,15 +187,25 @@ async function solveCaptchaWithPythonService(page, onProgress) {
   try {
     const task = `You are looking at a CAPTCHA or security verification page. Your task is to solve the CAPTCHA challenge.
 
+HUMAN-LIKE BEHAVIOR - CRITICAL:
+Before performing ANY click, drag, or type action, you MUST first make 2-3 random mouse movements to different areas of the screen to simulate natural human behavior. This helps avoid bot detection.
+
+Example sequence:
+1. move_mouse to a random area (e.g., x: 350, y: 200)
+2. move_mouse to another random area (e.g., x: 600, y: 450)
+3. move_mouse to near your target element
+4. THEN perform your actual action (click_at, drag_and_drop, type_text_at, etc.)
+
 IMPORTANT INSTRUCTIONS:
-1. Take ONE ACTION at a time (click, drag, type, etc.)
-2. After EACH action, STOP and wait to see the updated screen
-3. NEVER click submit/verify buttons immediately - first complete all required steps
-4. For image selection CAPTCHAs: Click each required image ONE AT A TIME, then wait
-5. For slider CAPTCHAs: Drag the slider, then wait to verify it worked
-6. For checkbox CAPTCHAs: Click the checkbox, then wait to see if more steps are needed
-7. Only click submit/verify/continue buttons AFTER you have completed all other steps
-8. If you see a checkmark or success indicator, THEN you can submit
+1. ALWAYS start with 2-3 random move_mouse actions before your main action
+2. Take ONE ACTION at a time (move_mouse, click, drag, type, etc.)
+3. After EACH action, STOP and wait to see the updated screen
+4. NEVER click submit/verify buttons immediately - first complete all required steps
+5. For image selection CAPTCHAs: Move mouse randomly, then click each required image ONE AT A TIME, then wait
+6. For slider CAPTCHAs: Move mouse randomly first, then drag the slider, then wait to verify it worked
+7. For checkbox CAPTCHAs: Move mouse randomly first, then click the checkbox, then wait to see if more steps are needed
+8. Only click submit/verify/continue buttons AFTER you have completed all other steps
+9. If you see a checkmark or success indicator, THEN you can submit
 
 Return ONE action at a time. Do not try to do multiple actions in one response.`;
     
