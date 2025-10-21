@@ -22,6 +22,8 @@ function App() {
   const [completedMinions, setCompletedMinions] = useState([]); // Track completed minions for animation
   const [minionHistory, setMinionHistory] = useState([]); // Track all minions for history
   const [showMinionHistory, setShowMinionHistory] = useState(false); // Toggle minion history panel
+  const [captchaActions, setCaptchaActions] = useState([]); // Track CAPTCHA solver actions for test mode
+  const [testMode, setTestMode] = useState(false); // Track if we're in test mode
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -223,6 +225,109 @@ function App() {
       }
     } catch (err) {
       console.error('❌ Search error:', err);
+      setError(err.message || 'An unexpected error occurred');
+      setLoading(false);
+      setStatusMessage('');
+    }
+  };
+
+  const handleTestCaptcha = async () => {
+    setLoading(true);
+    setError(null);
+    setResults(null);
+    setStatusMessage('Starting CAPTCHA test...');
+    setActiveMinions([]);
+    setCompletedMinions([]);
+    setMinionHistory([]);
+    setShowMinionHistory(false);
+    setCaptchaActions([]);
+    setTestMode(true);
+
+    try {
+      console.log('🧪 Starting CAPTCHA test mode');
+
+      const response = await fetch('/api/test-captcha', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      console.log('📡 Response status:', response.status, response.statusText);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ API Error:', errorText);
+        throw new Error(`Failed to start test: ${response.status} ${errorText}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          setLoading(false);
+          break;
+        }
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = JSON.parse(line.substring(6));
+
+            if (data.error) {
+              setError(data.error);
+              setLoading(false);
+              return;
+            }
+
+            if (data.status) {
+              setStatusMessage(data.message || '');
+
+              // Track CAPTCHA actions
+              if (data.action) {
+                setCaptchaActions(prev => [...prev, {
+                  timestamp: new Date().toISOString(),
+                  ...data.action
+                }]);
+              }
+
+              // Track minion updates for test mode
+              if (data.minionId) {
+                setActiveMinions(prev => {
+                  const existing = prev.find(m => m.minionId === data.minionId);
+                  if (existing) {
+                    return prev.map(m =>
+                      m.minionId === data.minionId
+                        ? { ...m, status: data.status, message: data.message }
+                        : m
+                    );
+                  } else {
+                    return [...prev, {
+                      minionId: data.minionId,
+                      status: data.status,
+                      message: data.message,
+                      departureDate: data.departureDate || 'Test',
+                      returnDate: data.returnDate || 'Mode'
+                    }];
+                  }
+                });
+              }
+
+              if (data.status === 'completed') {
+                setResults(data);
+                setLoading(false);
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('❌ Test error:', err);
       setError(err.message || 'An unexpected error occurred');
       setLoading(false);
       setStatusMessage('');
@@ -465,6 +570,17 @@ function App() {
                 </>
               )}
             </button>
+
+            {/* Test CAPTCHA Solver Button */}
+            <button
+              type="button"
+              onClick={handleTestCaptcha}
+              disabled={loading}
+              className="w-full bg-amber-600 text-white py-4 px-6 rounded-lg font-semibold hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+            >
+              <MonitorPlay className="w-5 h-5" />
+              <span>Test CAPTCHA Solver</span>
+            </button>
           </form>
 
           {/* Status Message */}
@@ -599,6 +715,45 @@ function App() {
                 );
               })}
             </div>
+
+            {/* CAPTCHA Actions Log - Only in Test Mode */}
+            {testMode && captchaActions.length > 0 && (
+              <div className="mt-8">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                  <MonitorPlay className="w-5 h-5 mr-2 text-amber-600" />
+                  Gemini CAPTCHA Solver Actions
+                </h3>
+                <div className="bg-gray-900 rounded-lg p-4 max-h-96 overflow-y-auto">
+                  <div className="space-y-2 font-mono text-sm">
+                    {captchaActions.map((action, index) => (
+                      <div key={index} className="border-l-4 border-amber-500 pl-3 py-2">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <span className="text-amber-400 font-semibold">
+                              [{new Date(action.timestamp).toLocaleTimeString()}]
+                            </span>
+                            <span className="text-green-400 ml-2">
+                              {action.type}
+                            </span>
+                            {action.description && (
+                              <p className="text-gray-300 mt-1">{action.description}</p>
+                            )}
+                            {action.coordinates && (
+                              <p className="text-blue-400 mt-1">
+                                Coordinates: ({action.coordinates.x}, {action.coordinates.y})
+                              </p>
+                            )}
+                            {action.reasoning && (
+                              <p className="text-purple-400 mt-1 italic">"{action.reasoning}"</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
             </div>
             )}
