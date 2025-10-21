@@ -250,7 +250,8 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
             action: {
               type: 'strategy',
               description: 'AI analyzed CAPTCHA and created solving strategy',
-              reasoning: strategy
+              reasoning: strategy,
+              screenshot: screenshotBase64
             }
           });
         }
@@ -269,7 +270,13 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         onProgress({
           status: 'gemini_thinking',
           message: `Gemini analyzing CAPTCHA (${iteration + 1}/${MAX_ITERATIONS})...`,
-          iteration: iteration + 1
+          iteration: iteration + 1,
+          action: {
+            type: 'analyzing',
+            description: `Iteration ${iteration + 1}: Analyzing screenshot to determine next action`,
+            reasoning: 'AI is examining the current state of the page',
+            screenshot: screenshotBase64
+          }
         });
       }
       
@@ -344,6 +351,7 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         }
 
         actionDetails.description = actionDescription;
+        actionDetails.screenshot = screenshotBase64; // Screenshot BEFORE action
 
         onProgress({
           status: 'gemini_action',
@@ -396,7 +404,8 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
           action: {
             type: 'assess',
             description: `Observing changes after ${firstAction.type}`,
-            reasoning: 'AI analyzing page response and deciding next step'
+            reasoning: 'AI analyzing page response and deciding next step',
+            screenshot: screenshotBase64 // Screenshot AFTER action
           }
         });
       }

@@ -351,20 +351,25 @@ function SearchPage() {
               <div className="mt-8 max-w-7xl mx-auto">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
                   <MonitorPlay className="w-5 h-5 mr-2 text-amber-600" />
-                  Gemini CAPTCHA Solver Actions
+                  Gemini CAPTCHA Solver Actions ({captchaActions.length} steps)
                 </h3>
-                <div className="bg-gray-900 rounded-lg p-4 max-h-96 overflow-y-auto">
-                  <div className="space-y-2 font-mono text-sm">
+                <div className="bg-gray-900 rounded-lg p-4 overflow-y-auto" style={{ maxHeight: '800px' }}>
+                  <div className="space-y-4 font-mono text-sm">
                     {captchaActions.map((action, index) => (
-                      <div key={index} className="border-l-4 border-amber-500 pl-3 py-2">
+                      <div key={index} className="border-l-4 border-amber-500 pl-3 py-3 bg-gray-800 rounded-r">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
-                            <span className="text-amber-400 font-semibold">
-                              [{new Date(action.timestamp).toLocaleTimeString()}]
-                            </span>
-                            <span className="text-green-400 ml-2">
-                              {action.type}
-                            </span>
+                            <div className="flex items-center space-x-2 mb-2">
+                              <span className="bg-amber-600 text-white px-2 py-1 rounded text-xs font-bold">
+                                Step {index + 1}
+                              </span>
+                              <span className="text-amber-400 font-semibold">
+                                [{new Date(action.timestamp).toLocaleTimeString()}]
+                              </span>
+                              <span className="text-green-400">
+                                {action.type}
+                              </span>
+                            </div>
                             {action.description && (
                               <p className="text-gray-300 mt-1">{action.description}</p>
                             )}
@@ -375,6 +380,29 @@ function SearchPage() {
                             )}
                             {action.reasoning && (
                               <p className="text-purple-400 mt-1 italic">"{action.reasoning}"</p>
+                            )}
+                            {action.screenshot && (
+                              <div className="mt-3 bg-gray-950 p-3 rounded">
+                                <div className="flex items-center space-x-2 mb-2">
+                                  <div className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse"></div>
+                                  <p className="text-cyan-400 text-xs font-semibold">
+                                    {action.type === 'assess' ? '📸 AFTER Action Screenshot' : '📸 Screenshot Analyzed by AI'}
+                                  </p>
+                                </div>
+                                <img
+                                  src={`data:image/png;base64,${action.screenshot}`}
+                                  alt={`Screenshot for ${action.type}`}
+                                  className="border-2 border-cyan-600 rounded max-w-full h-auto cursor-pointer hover:border-cyan-400 transition"
+                                  style={{ maxHeight: '500px' }}
+                                  onClick={(e) => {
+                                    // Open in new tab for full size view
+                                    const win = window.open();
+                                    win.document.write(`<img src="data:image/png;base64,${action.screenshot}" />`);
+                                  }}
+                                  title="Click to view full size"
+                                />
+                                <p className="text-gray-500 text-xs mt-1 italic">Click to view full size</p>
+                              </div>
                             )}
                           </div>
                         </div>
