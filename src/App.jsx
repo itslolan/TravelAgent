@@ -58,6 +58,9 @@ function App() {
             ...formData
           };
 
+      console.log('🚀 Starting search with:', requestBody);
+      console.log('🌐 API URL:', '/api/search-flights');
+
       const response = await fetch('/api/search-flights', {
         method: 'POST',
         headers: {
@@ -66,8 +69,12 @@ function App() {
         body: JSON.stringify(requestBody),
       });
 
+      console.log('📡 Response status:', response.status, response.statusText);
+
       if (!response.ok) {
-        throw new Error('Failed to start search');
+        const errorText = await response.text();
+        console.error('❌ API Error:', errorText);
+        throw new Error(`Failed to start search: ${response.status} ${errorText}`);
       }
 
       const reader = response.body.getReader();
@@ -215,8 +222,10 @@ function App() {
         }
       }
     } catch (err) {
-      setError(err.message);
+      console.error('❌ Search error:', err);
+      setError(err.message || 'An unexpected error occurred');
       setLoading(false);
+      setStatusMessage('');
     }
   };
 

@@ -5,12 +5,15 @@ const { runFlexibleSearch } = require('../services/flexibleSearchService');
 
 router.post('/search-flights', async (req, res) => {
   try {
+    console.log('📨 Received search request:', req.body);
     const { searchMode } = req.body;
 
     // Set up SSE (Server-Sent Events)
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
+    
+    console.log('✅ SSE headers set, mode:', searchMode);
 
     // Callback to send progress updates
     const sendUpdate = (data) => {
