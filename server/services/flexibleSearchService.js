@@ -225,79 +225,73 @@ async function runFlexibleSearch({
   const failedMinions = [];
   let totalAttempts = 0;
 
-  // Run all searches in parallel (with concurrency limit)
-  const CONCURRENCY_LIMIT = 3; // Run 3 minions at a time to avoid overwhelming BrowserBase
-  
-  for (let i = 0; i < combinations.length; i += CONCURRENCY_LIMIT) {
-    const batch = minionProgressHandlers.slice(i, i + CONCURRENCY_LIMIT);
-    
-    console.log(`\n--- Running batch ${Math.floor(i / CONCURRENCY_LIMIT) + 1} (Minions ${i + 1}-${Math.min(i + CONCURRENCY_LIMIT, combinations.length)}) ---`);
-    
-    const results = await Promise.allSettled(
-      batch.map(({ combo, minionId, handler }) =>
-        runSearch({
+  // Run ALL searches in parallel (no batching - true parallel execution)
+  console.log(`\n--- Starting ${combinations.length} minions in parallel ---`);
+
+  const results = await Promise.allSettled(
+    minionProgressHandlers.map(({ combo, minionId, handler }) =>
+      runSearch({
+        departureAirport,
+        arrivalAirport,
+        departureDate: combo.departureDate,
+        returnDate: combo.returnDate,
+        minionId,
+        onProgress: handler
+      })
+    )
+  );
+
+  // Track failures and send final update for failed minions
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index];
+    const { minionId, combo, handler } = minionProgressHandlers[index];
+    totalAttempts++;
+
+    if (result.status === 'rejected') {
+      console.error(`[Minion ${minionId}] FINAL FAILURE after retries:`, result.reason.message);
+      failedMinions.push({
+        minionId,
+        combo,
+        error: result.reason.message
+      });
+
+      // Increment processedMinions to unblock the UI
+      processedMinions++;
+
+      // Send failure notification
+      onProgress({
+        status: 'minion_failed_final',
+        message: `Minion ${minionId} failed after retries`,
+        minionId,
+        departureDate: combo.departureDate,
+        returnDate: combo.returnDate,
+        error: result.reason.message
+      });
+
+      // If this was the last minion, send final results
+      if (processedMinions === combinations.length && allResults.length > 0) {
+        console.log('All minions processed (some failed), sending final results...');
+
+        const finalAnalysis = await analyzeFlexibleResults(allResults, {
           departureAirport,
           arrivalAirport,
-          departureDate: combo.departureDate,
-          returnDate: combo.returnDate,
-          minionId,
-          onProgress: handler
-        })
-      )
-    );
-
-    // Track failures and send final update for failed minions
-    for (let index = 0; index < results.length; index++) {
-      const result = results[index];
-      const { minionId, combo, handler } = batch[index];
-      totalAttempts++;
-      
-      if (result.status === 'rejected') {
-        console.error(`[Minion ${minionId}] FINAL FAILURE after retries:`, result.reason.message);
-        failedMinions.push({
-          minionId,
-          combo,
-          error: result.reason.message
+          month,
+          year,
+          tripDuration
         });
-        
-        // Increment processedMinions to unblock the UI
-        processedMinions++;
-        
-        // Send failure notification
+
         onProgress({
-          status: 'minion_failed_final',
-          message: `Minion ${minionId} failed after retries`,
-          minionId,
-          departureDate: combo.departureDate,
-          returnDate: combo.returnDate,
-          error: result.reason.message
+          status: 'progressive_results',
+          message: `Final results (${allResults.length}/${combinations.length} successful)`,
+          searchMode: 'flexible',
+          totalCombinations: combinations.length,
+          resultsCollected: allResults.length,
+          completedMinions: allResults.length,
+          failedMinions: failedMinions.length,
+          allResults: [...allResults],
+          analysis: finalAnalysis,
+          isComplete: true
         });
-
-        // If this was the last minion, send final results
-        if (processedMinions === combinations.length && allResults.length > 0) {
-          console.log('All minions processed (some failed), sending final results...');
-          
-          const finalAnalysis = await analyzeFlexibleResults(allResults, {
-            departureAirport,
-            arrivalAirport,
-            month,
-            year,
-            tripDuration
-          });
-
-          onProgress({
-            status: 'progressive_results',
-            message: `Final results (${allResults.length}/${combinations.length} successful)`,
-            searchMode: 'flexible',
-            totalCombinations: combinations.length,
-            resultsCollected: allResults.length,
-            completedMinions: allResults.length,
-            failedMinions: failedMinions.length,
-            allResults: [...allResults],
-            analysis: finalAnalysis,
-            isComplete: true
-          });
-        }
       }
     }
   }
