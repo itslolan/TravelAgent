@@ -246,7 +246,12 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         if (onProgress) {
           onProgress({
             status: 'strategy_ready',
-            message: 'Strategy created: ' + strategy.substring(0, 100) + '...'
+            message: 'Strategy created: ' + strategy.substring(0, 100) + '...',
+            action: {
+              type: 'strategy',
+              description: 'AI analyzed CAPTCHA and created solving strategy',
+              reasoning: strategy
+            }
           });
         }
       }
@@ -294,7 +299,12 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
           onProgress({
             status: 'gemini_complete',
             message: 'CAPTCHA solved',
-            iteration: iteration + 1
+            iteration: iteration + 1,
+            action: {
+              type: 'complete',
+              description: 'CAPTCHA successfully solved!',
+              reasoning: 'AI confirmed CAPTCHA is solved and page has progressed'
+            }
           });
         }
         return true;
@@ -308,14 +318,41 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
       }
       
       if (onProgress) {
+        // Build detailed action description
+        let actionDescription = `Action: ${firstAction.type}`;
+        const actionDetails = {
+          type: firstAction.type,
+          description: actionDescription,
+          coordinates: null,
+          reasoning: message || 'AI determined this action'
+        };
+
+        if (firstAction.x !== undefined && firstAction.y !== undefined) {
+          actionDetails.coordinates = {
+            x: firstAction.x,
+            y: firstAction.y
+          };
+          actionDescription += ` at (${firstAction.x}, ${firstAction.y})`;
+        }
+
+        if (firstAction.text) {
+          actionDescription += ` - Text: "${firstAction.text}"`;
+        }
+
+        if (firstAction.destination_x !== undefined) {
+          actionDescription += ` → Drag to (${firstAction.destination_x}, ${firstAction.destination_y})`;
+        }
+
+        actionDetails.description = actionDescription;
+
         onProgress({
           status: 'gemini_action',
-          message: `Executing: ${firstAction.type}`,
-          action: firstAction,
+          message: actionDescription,
+          action: actionDetails,
           iteration: iteration + 1
         });
       }
-      
+
       console.log(`  -> Executing single action: ${firstAction.type}`);
       const actionResult = await executeAction(page, firstAction);
       
@@ -355,7 +392,12 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         onProgress({
           status: 'assessing',
           message: `AI assessing result of ${firstAction.type}...`,
-          iteration: iteration + 1
+          iteration: iteration + 1,
+          action: {
+            type: 'assess',
+            description: `Observing changes after ${firstAction.type}`,
+            reasoning: 'AI analyzing page response and deciding next step'
+          }
         });
       }
       
