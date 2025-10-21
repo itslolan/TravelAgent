@@ -84,6 +84,7 @@ function SearchPage() {
 
               // Track CAPTCHA actions for test mode
               if (data.action) {
+                console.log('📝 Received action:', data.action.type, 'Has screenshot:', !!data.action.screenshot);
                 setCaptchaActions(prev => [...prev, {
                   timestamp: new Date().toISOString(),
                   ...data.action
@@ -390,14 +391,14 @@ function SearchPage() {
                                   </p>
                                 </div>
                                 <img
-                                  src={`data:image/png;base64,${action.screenshot}`}
+                                  src={`data:image/jpeg;base64,${action.screenshot}`}
                                   alt={`Screenshot for ${action.type}`}
                                   className="border-2 border-cyan-600 rounded max-w-full h-auto cursor-pointer hover:border-cyan-400 transition"
                                   style={{ maxHeight: '500px' }}
                                   onClick={(e) => {
                                     // Open in new tab for full size view
                                     const win = window.open();
-                                    win.document.write(`<img src="data:image/png;base64,${action.screenshot}" />`);
+                                    win.document.write(`<img src="data:image/jpeg;base64,${action.screenshot}" />`);
                                   }}
                                   title="Click to view full size"
                                 />
