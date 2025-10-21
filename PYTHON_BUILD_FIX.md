@@ -1,20 +1,31 @@
-# ✅ Python Build Fix - Pillow Compatibility Error
+# ✅ Python Build Fix - Python 3.13 Compatibility Issues
 
-## The Error
+## The Errors
 
+### Error 1: Pillow Build Failure
 ```
 Getting requirements to build wheel did not run successfully.
 KeyError: '__version__'
-[end of output]
 ```
-
 When building `Pillow==10.2.0` on Python 3.13.
+
+### Error 2: Greenlet Build Failure
+```
+error: 'PyThreadState' {aka 'struct _ts'} has no member named 'cframe'
+error: 'PyThreadState' {aka 'struct _ts'} has no member named 'trash'
+ERROR: Failed building wheel for greenlet
+```
+When building `greenlet==3.0.3` (Playwright dependency) on Python 3.13.
 
 ## The Problem
 
-**Pillow 10.2.0 is incompatible with Python 3.13.**
+**Multiple packages are incompatible with Python 3.13:**
 
-Pillow 10.2.0 was released in January 2024, before Python 3.13 came out. There's a known issue where Pillow 10.2.0's setup.py has a bug that causes a `KeyError: '__version__'` when building on Python 3.13.
+1. **Pillow 10.2.0** - Has a `KeyError: '__version__'` bug with Python 3.13
+2. **greenlet 3.0.3** - Missing Python 3.13 internal API support (`cframe`, `trash` members)
+3. **Playwright 1.41.0** - Depends on greenlet 3.0.3
+
+These packages were released before Python 3.13 was finalized.
 
 ## The Solution
 
@@ -28,7 +39,17 @@ Pillow 10.2.0 was released in January 2024, before Python 3.13 came out. There's
 
 Pillow 10.3.0+ includes fixes for Python 3.13 compatibility.
 
-### Fix 2: Pin Python Version (Applied)
+### Fix 2: Update Playwright Version (Applied)
+
+```diff
+# requirements.txt
+- playwright==1.41.0
++ playwright>=1.48.0
+```
+
+Playwright 1.48.0+ uses greenlet 3.1.0+ which supports Python 3.13's internal API changes.
+
+### Fix 3: Pin Python Version (Applied)
 
 Created `python-captcha-solver/runtime.txt`:
 ```
@@ -37,17 +58,19 @@ python-3.11.9
 
 This ensures Render uses Python 3.11 (stable, well-tested) instead of defaulting to Python 3.13.
 
-## Why Both Fixes?
+## Why All Three Fixes?
 
 **Defense in depth:**
 - ✅ **Updated Pillow**: Future-proof, works with Python 3.13
+- ✅ **Updated Playwright**: Uses compatible greenlet, works with Python 3.13
 - ✅ **Pin Python 3.11**: Stable version, well-tested with all dependencies
-- ✅ **Best of both worlds**: If Render ignores runtime.txt, Pillow still works
+- ✅ **Best of both worlds**: If Render ignores runtime.txt, packages still work on Python 3.13
 
 ## Files Changed
 
 1. ✅ `python-captcha-solver/requirements.txt`
    - Changed `Pillow==10.2.0` → `Pillow>=10.3.0`
+   - Changed `playwright==1.41.0` → `playwright>=1.48.0`
 
 2. ✅ `python-captcha-solver/runtime.txt` (NEW)
    - Specifies Python 3.11.9
@@ -81,15 +104,19 @@ pip install -r requirements.txt
 ```bash
 Using Python 3.13.4 (default)
 pip install Pillow==10.2.0
-→ Build fails with KeyError ❌
+→ Pillow build fails with KeyError ❌
+pip install playwright==1.41.0
+→ greenlet 3.0.3 build fails (missing cframe) ❌
 ```
 
 **After (Success)**:
 ```bash
 Using Python 3.11.9 (from runtime.txt)
 pip install Pillow>=10.3.0
-→ Installs Pillow 10.4.0 or newer
-→ Build succeeds ✅
+→ Installs Pillow 10.4.0+ ✅
+pip install playwright>=1.48.0
+→ Installs Playwright 1.48.0+ with greenlet 3.1.0+ ✅
+→ All builds succeed ✅
 ```
 
 ## Next Steps
