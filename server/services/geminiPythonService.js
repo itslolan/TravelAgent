@@ -2,7 +2,8 @@ const axios = require('axios');
 
 // Python microservice URL
 const PYTHON_SERVICE_URL = process.env.PYTHON_CAPTCHA_SOLVER_URL || 'http://localhost:5000';
-const MAX_ITERATIONS = 10;
+const MAX_ITERATIONS = 15; // Increased to allow for carousel exploration
+const ITERATION_TIMEOUT = 25000; // 25 seconds per iteration (more time for assessment)
 
 /**
  * Check if Python CAPTCHA solver service is available
@@ -187,8 +188,43 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
     const screenWidth = viewport?.width || 1440;
     const screenHeight = viewport?.height || 900;
     
-    // Call Python service to analyze and get actions
-    console.log('📤 Sending screenshot to Python service...');
+    // PHASE 1: Strategy Planning
+    console.log('\n🎯 Phase 1: Analyzing CAPTCHA and creating strategy...');
+    if (onProgress) {
+      onProgress({
+        status: 'analyzing_strategy',
+        message: 'AI analyzing CAPTCHA type and creating solving strategy...'
+      });
+    }
+    
+    let strategy = '';
+    try {
+      const strategyResponse = await axios.post(`${PYTHON_SERVICE_URL}/analyze-strategy`, {
+        screenshot: screenshotBase64,
+        current_url: currentUrl
+      }, {
+        timeout: 30000
+      });
+      
+      if (strategyResponse.data.success) {
+        strategy = strategyResponse.data.strategy;
+        console.log('📋 Strategy created:');
+        console.log(strategy);
+        console.log('');
+        
+        if (onProgress) {
+          onProgress({
+            status: 'strategy_ready',
+            message: 'Strategy created: ' + strategy.substring(0, 100) + '...'
+          });
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️  Strategy planning failed, proceeding anyway:', error.message);
+    }
+    
+    // PHASE 2: Execute Strategy (Action-Observe-Assess Loop)
+    console.log('🎬 Phase 2: Executing strategy...');
     
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       console.log(`\n=== Gemini Iteration ${iteration + 1}/${MAX_ITERATIONS} ===`);
@@ -274,14 +310,22 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
       
       screenshotBase64 = newScreenshot.toString('base64');
       
-      // Analyze new state after the action
-      console.log(`  -> Analyzing screen after ${firstAction.type}...`);
+      // PHASE 3: Observe and Assess
+      console.log(`  -> 👀 Observing: What changed after ${firstAction.type}?`);
       
       let currentPageUrl = '';
       try {
         currentPageUrl = page.url();
       } catch (urlError) {
         console.warn('  -> Could not get page URL, using empty string');
+      }
+      
+      if (onProgress) {
+        onProgress({
+          status: 'assessing',
+          message: `AI assessing result of ${firstAction.type}...`,
+          iteration: iteration + 1
+        });
       }
       
       const stateResponse = await axios.post(`${PYTHON_SERVICE_URL}/analyze-state`, {
@@ -293,11 +337,12 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
       });
       
       if (stateResponse.data.complete) {
-        console.log('✅ Python service confirms CAPTCHA is solved!');
+        console.log('✅ AI confirms: CAPTCHA solution is correct and ready to submit!');
         return true;
       }
       
-      console.log(`🔄 Continuing... ${stateResponse.data.message}`);
+      console.log(`  -> 🤔 Assessment: ${stateResponse.data.message}`);
+      console.log(`  -> 🔄 Decision: Continue exploring...`);
     }
     
     console.log('⚠️  Reached max iterations without solving CAPTCHA');

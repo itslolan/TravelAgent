@@ -47,6 +47,75 @@ def health_check():
         'method': 'function_calling_with_computer_use_patterns'
     })
 
+@app.route('/analyze-strategy', methods=['POST'])
+def analyze_strategy():
+    """
+    Phase 1: Analyze CAPTCHA and create a solving strategy
+    Model observes the CAPTCHA and plans approach before taking actions
+    """
+    try:
+        data = request.json
+        screenshot_b64 = data.get('screenshot')
+        current_url = data.get('current_url', '')
+        
+        if not screenshot_b64:
+            return jsonify({'success': False, 'message': 'No screenshot provided'}), 400
+        
+        # Decode screenshot
+        screenshot_bytes = base64.b64decode(screenshot_b64)
+        
+        # Strategy analysis prompt
+        strategy_prompt = """You are analyzing a CAPTCHA challenge. DO NOT take any actions yet.
+
+Your task is to:
+1. Identify the type of CAPTCHA (image selection, slider, checkbox, carousel, etc.)
+2. Understand what the challenge is asking you to do
+3. Look for navigation elements (arrows, next/previous buttons, carousels)
+4. Determine if multiple steps are needed (e.g., click through carousel items)
+5. Create a step-by-step strategy to solve this CAPTCHA
+
+IMPORTANT:
+- If you see carousel/navigation arrows, note that you'll need to explore multiple options
+- If it's an image selection CAPTCHA, identify how many images need to be selected
+- DO NOT click verify/submit buttons until you're certain you have the correct solution
+- Return your analysis and strategy as text
+
+Describe your strategy in detail. What type of CAPTCHA is this? What steps will you take?"""
+        
+        # Use Gemini to analyze
+        model = genai.GenerativeModel(model_name='gemini-2.0-flash-exp')
+        
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part(text=strategy_prompt),
+                    types.Part.from_bytes(
+                        data=screenshot_bytes,
+                        mime_type='image/png'
+                    )
+                ]
+            )
+        ]
+        
+        response = model.generate_content(contents)
+        strategy = response.text
+        
+        print(f"[Strategy] {strategy}")
+        
+        return jsonify({
+            'success': True,
+            'strategy': strategy,
+            'message': 'Strategy created'
+        })
+        
+    except Exception as e:
+        print(f"Error in strategy analysis: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.route('/solve-captcha', methods=['POST'])
 def solve_captcha():
     """
@@ -327,20 +396,30 @@ def analyze_state():
             tools=[types.Tool(function_declarations=functions)]
         )
         
-        # Ask model to check if CAPTCHA is solved
-        task = f"""After executing '{previous_action}', analyze the current screen carefully.
+        # Ask model to assess current state and decide next action
+        task = f"""After executing '{previous_action}', observe and assess the current screen.
 
-CRITICAL INSTRUCTIONS:
-1. Look at what changed after the action
-2. Check if there's a checkmark, success indicator, or confirmation
-3. If this is an image selection CAPTCHA and you clicked an image, verify if it was selected (highlighted/checkmark)
-4. If this is a slider CAPTCHA and you dragged it, verify it reached the end
-5. If you see "Verify" or "Submit" buttons, DO NOT click them yet unless ALL required steps are complete
-6. Only return a submit/verify action if you see clear success indicators (checkmarks, "Success", green indicators)
-7. If more selections are needed, provide the next selection action
-8. Return ONE action at a time
+ASSESSMENT PHASE - Answer these questions:
+1. What changed after the last action? (Was something selected? Did content change? Did a carousel move?)
+2. If this is a carousel CAPTCHA: Did you explore all options using left/right arrows? Or do you need to click navigation to see more?
+3. If this is an image selection CAPTCHA: Are all required images selected? Do you see checkmarks on the correct ones?
+4. If this is a slider CAPTCHA: Did the slider reach the correct position? Is there a success indicator?
+5. Do you have COMPLETE CONFIDENCE that you have the correct solution?
 
-Is the CAPTCHA completely solved? If yes, confirm completion. If no, provide the NEXT SINGLE action needed."""
+DECISION PHASE - Decide what to do next:
+- If you need to explore more (carousel arrows, next buttons): Click navigation to see more options
+- If you need to select/deselect more items: Perform that action
+- If you need to verify your work: Take another look at what you've selected
+- If you are 100% CERTAIN you have the correct solution AND you see success indicators (checkmarks, green highlights): ONLY THEN click submit/verify
+- If you're NOT certain: Continue exploring and verifying
+
+CRITICAL RULES:
+- DO NOT click submit/verify unless you are ABSOLUTELY CERTAIN
+- If there are carousel/navigation buttons, you MUST explore all options before submitting
+- Return ONE action at a time
+- Never rush to submit - thorough exploration is better than speed
+
+What is your assessment? What single action should you take next?"""
         
         contents = [
             types.Content(

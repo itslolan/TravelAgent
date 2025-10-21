@@ -3,6 +3,8 @@ const axios = require('axios');
 const { runGeminiAgentLoop, checkPageReadiness, solveCaptchaWithGemini } = require('./geminiComputerUse');
 const { solveCaptchaWithPythonService } = require('./geminiPythonService');
 const { searchMonitor } = require('./searchMonitor');
+const { validateProxyHealth, retryWithBackoff, browserbaseCircuitBreaker } = require('./proxyHealthCheck');
+const { createEnhancedSession, setupRequestInterception } = require('./sessionManager');
 
 /**
  * Get live view URL for a session using BrowserBase Live View API
@@ -46,8 +48,9 @@ async function getLiveViewUrl(sessionId) {
 
 /**
  * Creates a BrowserBase session and returns the connection URL
+ * Now uses enhanced session with context persistence and geolocation
  */
-async function createBrowserBaseSession() {
+async function createBrowserBaseSession(options = {}) {
   const apiKey = process.env.BROWSERBASE_API_KEY;
   const projectId = process.env.BROWSERBASE_PROJECT_ID;
 
@@ -56,27 +59,16 @@ async function createBrowserBaseSession() {
   }
 
   try {
-    const response = await axios.post(
-      'https://www.browserbase.com/v1/sessions',
-      {
-        projectId: projectId,
-        proxies: true, // Enable BrowserBase managed residential proxies
-        browserSettings: {
-          viewport: {
-            width: 1440,  // Official Computer Use recommended dimensions
-            height: 900   // https://ai.google.dev/gemini-api/docs/computer-use
-          }
-        }
-      },
-      {
-        headers: {
-          'X-BB-API-Key': apiKey,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    // Use enhanced session creation with retry logic and circuit breaker
+    const sessionData = await createEnhancedSession({
+      projectId,
+      apiKey,
+      userId: options.userId || null,
+      countryCode: options.countryCode || 'US',
+      persistContext: options.persistContext !== false, // Default true
+      enableProxies: options.enableProxies !== false   // Default true
+    });
 
-    const sessionData = response.data;
     const sessionId = sessionData.id;
     const connectUrl = `wss://connect.browserbase.com?apiKey=${apiKey}&sessionId=${sessionId}`;
     
@@ -99,8 +91,12 @@ async function createBrowserBaseSession() {
       sessionData 
     };
   } catch (error) {
-    console.error('Error creating BrowserBase session:', error.response?.data || error.message);
-    throw new Error('Failed to create BrowserBase session');
+    console.error('❌ Failed to create BrowserBase session:', error.message);
+    if (error.response?.data) {
+      console.error('   Response:', JSON.stringify(error.response.data, null, 2));
+    }
+    // Re-throw the original error for better debugging
+    throw error;
   }
 }
 
@@ -132,6 +128,14 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
     browser = await chromium.connectOverCDP(connectUrl);
     const context = browser.contexts()[0];
     const page = context.pages()[0] || await context.newPage();
+
+    // Setup request interception for faster page loads
+    await setupRequestInterception(page, {
+      blockAds: true,
+      blockAnalytics: true,
+      blockImages: false,
+      logRequests: false
+    });
 
     // Format dates for Expedia
     const formattedDepartureDate = formatDateForExpedia(departureDate);
@@ -303,6 +307,14 @@ async function searchFlightsWithProgress({ departureAirport, arrivalAirport, dep
     const page = context.pages()[0] || await context.newPage();
 
     onProgress({ status: 'connected', message: 'Connected to browser, preparing search...' });
+
+    // Setup request interception for faster page loads
+    await setupRequestInterception(page, {
+      blockAds: true,
+      blockAnalytics: true,
+      blockImages: false,
+      logRequests: false
+    });
 
     // Format dates for Expedia
     const formattedDepartureDate = formatDateForExpedia(departureDate);
