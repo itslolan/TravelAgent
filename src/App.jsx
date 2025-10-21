@@ -229,7 +229,7 @@ function App() {
             <div>
               <div className="flex items-center space-x-3">
                 <Plane className="w-8 h-8 text-indigo-600" />
-                <h1 className="text-3xl font-bold text-gray-900">TravelAgent</h1>
+                <h1 className="text-3xl font-bold text-gray-900">Trip Agent</h1>
               </div>
               <p className="mt-2 text-gray-600">AI-powered flight booking assistant</p>
             </div>
