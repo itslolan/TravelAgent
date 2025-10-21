@@ -209,10 +209,11 @@ IMPORTANT INSTRUCTIONS:
 
 Return ONE action at a time. Do not try to do multiple actions in one response.`;
     
-    // Capture initial screenshot
-    const screenshot = await page.screenshot({ type: 'png' });
+    // Capture initial screenshot (JPEG for smaller size - better for SSE streaming)
+    const screenshot = await page.screenshot({ type: 'jpeg', quality: 80 });
     let screenshotBase64 = screenshot.toString('base64');
     const currentUrl = page.url();
+    console.log(`📸 Initial screenshot captured (${Math.round(screenshotBase64.length / 1024)}KB)`);
     
     // Get viewport size (with fallback to defaults)
     const viewport = page.viewportSize();
@@ -244,6 +245,8 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         console.log('');
         
         if (onProgress) {
+          const screenshotSize = screenshotBase64 ? Math.round(screenshotBase64.length / 1024) : 0;
+          console.log(`📤 Sending strategy action with screenshot (${screenshotSize}KB)`);
           onProgress({
             status: 'strategy_ready',
             message: 'Strategy created: ' + strategy.substring(0, 100) + '...',
@@ -353,6 +356,9 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         actionDetails.description = actionDescription;
         actionDetails.screenshot = screenshotBase64; // Screenshot BEFORE action
 
+        const screenshotSize = screenshotBase64 ? Math.round(screenshotBase64.length / 1024) : 0;
+        console.log(`📤 Sending ${firstAction.type} action with screenshot (${screenshotSize}KB)`);
+
         onProgress({
           status: 'gemini_action',
           message: actionDescription,
@@ -374,17 +380,18 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         console.warn('  -> Timeout wait failed, continuing...');
       });
       
-      // Capture new screenshot for next iteration
-      const newScreenshot = await page.screenshot({ type: 'png' }).catch(() => {
+      // Capture new screenshot for next iteration (JPEG for smaller size)
+      const newScreenshot = await page.screenshot({ type: 'jpeg', quality: 80 }).catch(() => {
         console.error('  -> Screenshot failed, CAPTCHA solving cannot continue');
         return null;
       });
-      
+
       if (!newScreenshot) {
         return false;
       }
-      
+
       screenshotBase64 = newScreenshot.toString('base64');
+      console.log(`📸 New screenshot captured (${Math.round(screenshotBase64.length / 1024)}KB)`);
       
       // PHASE 3: Observe and Assess
       console.log(`  -> 👀 Observing: What changed after ${firstAction.type}?`);

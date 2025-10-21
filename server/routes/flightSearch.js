@@ -93,7 +93,17 @@ router.post('/test-captcha', async (req, res) => {
 
     // Callback to send progress updates
     const sendUpdate = (data) => {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      try {
+        const jsonStr = JSON.stringify(data);
+        const sizeKB = Math.round(jsonStr.length / 1024);
+        if (data.action && data.action.screenshot) {
+          console.log(`📡 SSE sending ${data.action.type} with screenshot (total: ${sizeKB}KB)`);
+        }
+        res.write(`data: ${jsonStr}\n\n`);
+      } catch (error) {
+        console.error('❌ Error sending SSE update:', error.message);
+        console.error('   Data keys:', Object.keys(data));
+      }
     };
 
     // Generate random search parameters for testing
