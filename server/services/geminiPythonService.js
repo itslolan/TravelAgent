@@ -7,8 +7,13 @@ const getPythonServiceUrl = () => {
     return process.env.PYTHON_CAPTCHA_SOLVER_URL;
   }
   if (process.env.PYTHON_CAPTCHA_SOLVER_HOST) {
+    let host = process.env.PYTHON_CAPTCHA_SOLVER_HOST;
+    // If host doesn't include a domain, append .onrender.com (Render's default)
+    if (!host.includes('.')) {
+      host = `${host}.onrender.com`;
+    }
     // Render provides hostname without protocol, add https://
-    return `https://${process.env.PYTHON_CAPTCHA_SOLVER_HOST}`;
+    return `https://${host}`;
   }
   return 'http://localhost:5000';
 };
