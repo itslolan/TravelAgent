@@ -79,27 +79,44 @@ function App() {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = '';
+
+      console.log('📖 Starting to read response stream...');
 
       while (true) {
         const { done, value } = await reader.read();
         
         if (done) {
+          console.log('✅ Stream completed');
           setLoading(false);
           break;
         }
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        // Decode and add to buffer
+        buffer += decoder.decode(value, { stream: true });
+        console.log('📦 Received chunk, buffer length:', buffer.length);
+        
+        // Process complete lines
+        const lines = buffer.split('\n');
+        // Keep the last incomplete line in buffer
+        buffer = lines.pop() || '';
         
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.substring(6));
-            
-            if (data.error) {
-              setError(data.error);
-              setLoading(false);
-              return;
-            }
+            try {
+              const jsonStr = line.substring(6).trim();
+              if (!jsonStr) continue;
+              
+              console.log('📨 Parsing data:', jsonStr.substring(0, 100) + '...');
+              const data = JSON.parse(jsonStr);
+              console.log('✅ Parsed data:', data.status || data.message);
+              
+              if (data.error) {
+                console.error('❌ Error in stream:', data.error);
+                setError(data.error);
+                setLoading(false);
+                return;
+              }
 
             // Update status message
             if (data.message) {
@@ -217,6 +234,10 @@ function App() {
             if (data.status === 'completed' && data.searchMode !== 'flexible') {
               setResults(data);
               setLoading(false);
+            }
+            
+            } catch (parseError) {
+              console.error('❌ Failed to parse SSE data:', parseError, 'Line:', line);
             }
           }
         }
