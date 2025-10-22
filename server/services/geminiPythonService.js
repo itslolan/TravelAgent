@@ -7,8 +7,13 @@ const getPythonServiceUrl = () => {
     return process.env.PYTHON_CAPTCHA_SOLVER_URL;
   }
   if (process.env.PYTHON_CAPTCHA_SOLVER_HOST) {
+    let host = process.env.PYTHON_CAPTCHA_SOLVER_HOST;
+    // If host doesn't include a domain, append .onrender.com (Render's default)
+    if (!host.includes('.')) {
+      host = `${host}.onrender.com`;
+    }
     // Render provides hostname without protocol, add https://
-    return `https://${process.env.PYTHON_CAPTCHA_SOLVER_HOST}`;
+    return `https://${host}`;
   }
   return 'http://localhost:5000';
 };
@@ -72,7 +77,11 @@ async function executeAction(page, action) {
       case 'hover_at':
         await page.mouse.move(args.x, args.y);
         break;
-        
+
+      case 'move_mouse':
+        await page.mouse.move(args.x, args.y);
+        break;
+
       case 'type_text_at':
         // Click at position first
         await page.mouse.click(args.x, args.y);
@@ -178,22 +187,33 @@ async function solveCaptchaWithPythonService(page, onProgress) {
   try {
     const task = `You are looking at a CAPTCHA or security verification page. Your task is to solve the CAPTCHA challenge.
 
+HUMAN-LIKE BEHAVIOR - CRITICAL:
+Before performing ANY click, drag, or type action, you MUST first make 2-3 random mouse movements to different areas of the screen to simulate natural human behavior. This helps avoid bot detection.
+
+Example sequence:
+1. move_mouse to a random area (e.g., x: 350, y: 200)
+2. move_mouse to another random area (e.g., x: 600, y: 450)
+3. move_mouse to near your target element
+4. THEN perform your actual action (click_at, drag_and_drop, type_text_at, etc.)
+
 IMPORTANT INSTRUCTIONS:
-1. Take ONE ACTION at a time (click, drag, type, etc.)
-2. After EACH action, STOP and wait to see the updated screen
-3. NEVER click submit/verify buttons immediately - first complete all required steps
-4. For image selection CAPTCHAs: Click each required image ONE AT A TIME, then wait
-5. For slider CAPTCHAs: Drag the slider, then wait to verify it worked
-6. For checkbox CAPTCHAs: Click the checkbox, then wait to see if more steps are needed
-7. Only click submit/verify/continue buttons AFTER you have completed all other steps
-8. If you see a checkmark or success indicator, THEN you can submit
+1. ALWAYS start with 2-3 random move_mouse actions before your main action
+2. Take ONE ACTION at a time (move_mouse, click, drag, type, etc.)
+3. After EACH action, STOP and wait to see the updated screen
+4. NEVER click submit/verify buttons immediately - first complete all required steps
+5. For image selection CAPTCHAs: Move mouse randomly, then click each required image ONE AT A TIME, then wait
+6. For slider CAPTCHAs: Move mouse randomly first, then drag the slider, then wait to verify it worked
+7. For checkbox CAPTCHAs: Move mouse randomly first, then click the checkbox, then wait to see if more steps are needed
+8. Only click submit/verify/continue buttons AFTER you have completed all other steps
+9. If you see a checkmark or success indicator, THEN you can submit
 
 Return ONE action at a time. Do not try to do multiple actions in one response.`;
     
-    // Capture initial screenshot
-    const screenshot = await page.screenshot({ type: 'png' });
+    // Capture initial screenshot (JPEG for smaller size - better for SSE streaming)
+    const screenshot = await page.screenshot({ type: 'jpeg', quality: 80 });
     let screenshotBase64 = screenshot.toString('base64');
     const currentUrl = page.url();
+    console.log(`📸 Initial screenshot captured (${Math.round(screenshotBase64.length / 1024)}KB)`);
     
     // Get viewport size (with fallback to defaults)
     const viewport = page.viewportSize();
@@ -225,9 +245,17 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         console.log('');
         
         if (onProgress) {
+          const screenshotSize = screenshotBase64 ? Math.round(screenshotBase64.length / 1024) : 0;
+          console.log(`📤 Sending strategy action with screenshot (${screenshotSize}KB)`);
           onProgress({
             status: 'strategy_ready',
-            message: 'Strategy created: ' + strategy.substring(0, 100) + '...'
+            message: 'Strategy created: ' + strategy.substring(0, 100) + '...',
+            action: {
+              type: 'strategy',
+              description: 'AI analyzed CAPTCHA and created solving strategy',
+              reasoning: strategy,
+              screenshot: screenshotBase64
+            }
           });
         }
       }
@@ -245,7 +273,13 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         onProgress({
           status: 'gemini_thinking',
           message: `Gemini analyzing CAPTCHA (${iteration + 1}/${MAX_ITERATIONS})...`,
-          iteration: iteration + 1
+          iteration: iteration + 1,
+          action: {
+            type: 'analyzing',
+            description: `Iteration ${iteration + 1}: Analyzing screenshot to determine next action`,
+            reasoning: 'AI is examining the current state of the page',
+            screenshot: screenshotBase64
+          }
         });
       }
       
@@ -275,7 +309,12 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
           onProgress({
             status: 'gemini_complete',
             message: 'CAPTCHA solved',
-            iteration: iteration + 1
+            iteration: iteration + 1,
+            action: {
+              type: 'complete',
+              description: 'CAPTCHA successfully solved!',
+              reasoning: 'AI confirmed CAPTCHA is solved and page has progressed'
+            }
           });
         }
         return true;
@@ -289,14 +328,45 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
       }
       
       if (onProgress) {
+        // Build detailed action description
+        let actionDescription = `Action: ${firstAction.type}`;
+        const actionDetails = {
+          type: firstAction.type,
+          description: actionDescription,
+          coordinates: null,
+          reasoning: message || 'AI determined this action'
+        };
+
+        if (firstAction.x !== undefined && firstAction.y !== undefined) {
+          actionDetails.coordinates = {
+            x: firstAction.x,
+            y: firstAction.y
+          };
+          actionDescription += ` at (${firstAction.x}, ${firstAction.y})`;
+        }
+
+        if (firstAction.text) {
+          actionDescription += ` - Text: "${firstAction.text}"`;
+        }
+
+        if (firstAction.destination_x !== undefined) {
+          actionDescription += ` → Drag to (${firstAction.destination_x}, ${firstAction.destination_y})`;
+        }
+
+        actionDetails.description = actionDescription;
+        actionDetails.screenshot = screenshotBase64; // Screenshot BEFORE action
+
+        const screenshotSize = screenshotBase64 ? Math.round(screenshotBase64.length / 1024) : 0;
+        console.log(`📤 Sending ${firstAction.type} action with screenshot (${screenshotSize}KB)`);
+
         onProgress({
           status: 'gemini_action',
-          message: `Executing: ${firstAction.type}`,
-          action: firstAction,
+          message: actionDescription,
+          action: actionDetails,
           iteration: iteration + 1
         });
       }
-      
+
       console.log(`  -> Executing single action: ${firstAction.type}`);
       const actionResult = await executeAction(page, firstAction);
       
@@ -310,17 +380,18 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         console.warn('  -> Timeout wait failed, continuing...');
       });
       
-      // Capture new screenshot for next iteration
-      const newScreenshot = await page.screenshot({ type: 'png' }).catch(() => {
+      // Capture new screenshot for next iteration (JPEG for smaller size)
+      const newScreenshot = await page.screenshot({ type: 'jpeg', quality: 80 }).catch(() => {
         console.error('  -> Screenshot failed, CAPTCHA solving cannot continue');
         return null;
       });
-      
+
       if (!newScreenshot) {
         return false;
       }
-      
+
       screenshotBase64 = newScreenshot.toString('base64');
+      console.log(`📸 New screenshot captured (${Math.round(screenshotBase64.length / 1024)}KB)`);
       
       // PHASE 3: Observe and Assess
       console.log(`  -> 👀 Observing: What changed after ${firstAction.type}?`);
@@ -336,7 +407,13 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
         onProgress({
           status: 'assessing',
           message: `AI assessing result of ${firstAction.type}...`,
-          iteration: iteration + 1
+          iteration: iteration + 1,
+          action: {
+            type: 'assess',
+            description: `Observing changes after ${firstAction.type}`,
+            reasoning: 'AI analyzing page response and deciding next step',
+            screenshot: screenshotBase64 // Screenshot AFTER action
+          }
         });
       }
       

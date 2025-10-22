@@ -164,6 +164,18 @@ def solve_captcha():
         # Define Computer Use functions
         functions = [
             {
+                "name": "move_mouse",
+                "description": "Move the mouse cursor to specific coordinates without clicking. Use this to simulate human-like mouse movements.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "integer", "description": "X coordinate (0-999)"},
+                        "y": {"type": "integer", "description": "Y coordinate (0-999)"}
+                    },
+                    "required": ["x", "y"]
+                }
+            },
+            {
                 "name": "click_at",
                 "description": "Click at specific coordinates on the screen",
                 "parameters": {
@@ -350,6 +362,18 @@ def analyze_state():
         # Define Computer Use functions
         functions = [
             {
+                "name": "move_mouse",
+                "description": "Move the mouse cursor to specific coordinates without clicking. Use this to simulate human-like mouse movements.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "integer", "description": "X coordinate (0-999)"},
+                        "y": {"type": "integer", "description": "Y coordinate (0-999)"}
+                    },
+                    "required": ["x", "y"]
+                }
+            },
+            {
                 "name": "click_at",
                 "description": "Click at specific coordinates",
                 "parameters": {
@@ -399,6 +423,9 @@ def analyze_state():
         # Ask model to assess current state and decide next action
         task = f"""After executing '{previous_action}', observe and assess the current screen.
 
+HUMAN-LIKE BEHAVIOR - CRITICAL:
+Before performing ANY click, drag, or type action, you MUST first make 2-3 random mouse movements to different areas of the screen to simulate natural human behavior. This helps avoid bot detection.
+
 ASSESSMENT PHASE - Answer these questions:
 1. What changed after the last action? (Was something selected? Did content change? Did a carousel move?)
 2. If this is a carousel CAPTCHA: Did you explore all options using left/right arrows? Or do you need to click navigation to see more?
@@ -407,13 +434,15 @@ ASSESSMENT PHASE - Answer these questions:
 5. Do you have COMPLETE CONFIDENCE that you have the correct solution?
 
 DECISION PHASE - Decide what to do next:
-- If you need to explore more (carousel arrows, next buttons): Click navigation to see more options
-- If you need to select/deselect more items: Perform that action
+- ALWAYS start with 2-3 random move_mouse actions before your main action
+- If you need to explore more (carousel arrows, next buttons): Move mouse randomly first, then click navigation to see more options
+- If you need to select/deselect more items: Move mouse randomly first, then perform that action
 - If you need to verify your work: Take another look at what you've selected
-- If you are 100% CERTAIN you have the correct solution AND you see success indicators (checkmarks, green highlights): ONLY THEN click submit/verify
+- If you are 100% CERTAIN you have the correct solution AND you see success indicators (checkmarks, green highlights): Move mouse randomly first, ONLY THEN click submit/verify
 - If you're NOT certain: Continue exploring and verifying
 
 CRITICAL RULES:
+- ALWAYS perform 2-3 move_mouse actions before any click/drag/type action
 - DO NOT click submit/verify unless you are ABSOLUTELY CERTAIN
 - If there are carousel/navigation buttons, you MUST explore all options before submitting
 - Return ONE action at a time
