@@ -492,15 +492,11 @@ ${clickableElementsText}`
                 }
               }, { x: args.x, y: args.y });
               
-              // Wait a moment for the red dot to appear
-              await page.waitForTimeout(100);
-              
               // Capture screenshot WITH the red dot visible
               const clickScreenshot = await page.screenshot({ type: 'png' });
               clickScreenshotBase64 = clickScreenshot.toString('base64'); // Store for later use
               
               await page.mouse.click(args.x, args.y);
-              await page.waitForTimeout(1000); // Wait for click to register
               
               result = { 
                 success: true, 
@@ -521,12 +517,10 @@ ${clickableElementsText}`
               }, { x: args.x, y: args.y });
               
               await page.mouse.click(args.x, args.y);
-              await page.waitForTimeout(500);
               await page.keyboard.type(args.text);
               if (args.press_enter) {
                 await page.keyboard.press('Enter');
               }
-              await page.waitForTimeout(1000);
               result = { success: true, message: `Typed "${args.text}" at (${args.x}, ${args.y})` };
               
               // Record action in history with reasoning
@@ -538,7 +532,6 @@ ${clickableElementsText}`
               const scrollAmount = args.amount || 500;
               const deltaY = args.direction === 'down' ? scrollAmount : -scrollAmount;
               await page.mouse.wheel(0, deltaY);
-              await page.waitForTimeout(500);
               result = { success: true, message: `Scrolled ${args.direction} by ${scrollAmount}px` };
               
               // Record action in history with reasoning
@@ -599,6 +592,14 @@ ${clickableElementsText}`
       
       // Add tool results to messages
       messages.push(...toolResults);
+      
+      // Wait for any navigation to complete after actions
+      // This prevents "Execution context was destroyed" errors
+      try {
+        await page.waitForLoadState('networkidle', { timeout: 30000 });
+      } catch (error) {
+        // Ignore timeout - page might not be navigating
+      }
       
       // Take new screenshot for next iteration
       const newScreenshot = await page.screenshot({ type: 'png' });

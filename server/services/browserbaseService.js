@@ -360,12 +360,16 @@ async function runFlightSearchWithComputerUse({ page, departureAirport, arrivalA
 ----
 You need to browse the ${website.name} website and search for flights. 
 
-IMPORTANT: YOU NEED TO KEEP TRYING TILL YOU GET THE FLIGHT DETAILS
+**IMPORTANT**
+----
+1. YOU NEED TO KEEP TRYING TILL YOU GET THE FLIGHT DETAILS
+2. Before clicking on the search button, take a pause to ensure that all the input fields are filled correctly.
 
 KNOWN QUIRKS WITH KAYAK'S WEBSITE -
 1. After typing the departure airport and arrival airport input fields, you SHOULD NOT press the enter button. You should wait for the dropdown to show the options, and then click on the appropriate option.
 2. Kayak's departure airport and arrival airport input fields support multiple values. So please ensure you delete any unnecessary values from the input before using the "X" button.
 3. Always ensure the departure date and return date are selected correctly. If the dates are not selected correctly, please try again.
+4. When filling out the departure date and return date, you need to fill them out one by one (i.e, don't click on the input field for departure date and return date quickly in succession). Click on the input field, click on the desired date from the calendar, before moving to the next field.
 
 ---
 
@@ -604,12 +608,12 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
     try {
       await page.goto(expediaUrl, { 
         waitUntil: 'networkidle',  // Less strict than networkidle
-        timeout: 30000  // 60 seconds
+        timeout: 10000  // 10 seconds
       });
       console.log('✅ Page navigation successful');
       
       // Wait a bit for page to stabilize
-      await page.waitForTimeout(3000);
+      // await page.waitForTimeout(3000);
     } catch (navError) {
       console.log('⚠️  Navigation warning:', navError.message);
       
