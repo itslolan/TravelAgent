@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Plane, Loader2, DollarSign, ExternalLink, MonitorPlay, CheckCircle, XCircle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import CaptchaSolvingModal from '../components/CaptchaSolvingModal';
+import { isHumanSolvingEnabled, getCaptchaMode } from '../config/captchaConfig';
 
 function SearchPage() {
   const location = useLocation();
@@ -17,6 +19,19 @@ function SearchPage() {
   const [showMinionHistory, setShowMinionHistory] = useState(false);
   const [captchaActions, setCaptchaActions] = useState([]);
   const [testMode, setTestMode] = useState(isTestMode || false);
+  
+  // CAPTCHA solving state
+  const [showCaptchaModal, setShowCaptchaModal] = useState(false);
+  const [captchaQueue, setCaptchaQueue] = useState([]); // Queue of minions with CAPTCHAs
+  const [currentCaptchaIndex, setCurrentCaptchaIndex] = useState(0);
+  const [captchaSessions, setCaptchaSessions] = useState(new Map());
+  
+  // Current CAPTCHA being solved
+  const currentCaptcha = captchaQueue[currentCaptchaIndex] || null;
+  const totalCaptchas = captchaQueue.length;
+
+  // Prevent duplicate searches (React StrictMode calls useEffect twice in dev)
+  const searchInitiatedRef = useRef(false);
 
   useEffect(() => {
     // If no search params, redirect to home
@@ -24,6 +39,14 @@ function SearchPage() {
       navigate('/');
       return;
     }
+
+    // Prevent duplicate search initialization
+    if (searchInitiatedRef.current) {
+      console.log('⚠️ Search already initiated, skipping duplicate call');
+      return;
+    }
+
+    searchInitiatedRef.current = true;
 
     // Start the search
     startSearch();
@@ -111,6 +134,47 @@ function SearchPage() {
   };
 
   const handleStatusUpdate = (data) => {
+    // Handle CAPTCHA detection
+    if (data.status === 'captcha_detected' && isHumanSolvingEnabled()) {
+      console.log('🤖 CAPTCHA detected for minion:', data.minionId);
+      
+      // Add this minion to the CAPTCHA queue if not already present
+      setCaptchaQueue(prev => {
+        const existingIndex = prev.findIndex(item => item.minionId === data.minionId);
+        if (existingIndex === -1) {
+          // New minion with CAPTCHA
+          const newCaptcha = {
+            minionId: data.minionId,
+            sessionId: data.sessionId,
+            debuggerUrl: data.debuggerUrl,
+            captchaType: data.captchaType || 'unknown',
+            departureDate: data.departureDate || 'Unknown',
+            returnDate: data.returnDate || 'Route'
+          };
+          
+          console.log('➕ Adding minion to CAPTCHA queue:', data.minionId);
+          return [...prev, newCaptcha];
+        }
+        return prev; // Already in queue
+      });
+      
+      // Store the session info for this CAPTCHA
+      setCaptchaSessions(prev => new Map(prev).set(data.minionId, {
+        sessionId: data.sessionId,
+        debuggerUrl: data.debuggerUrl,
+        captchaType: data.captchaType || 'unknown'
+      }));
+      
+      // Show modal if not already shown
+      if (!showCaptchaModal) {
+        console.log('🔓 Opening CAPTCHA modal');
+        setShowCaptchaModal(true);
+        setCurrentCaptchaIndex(0);
+      }
+      
+      return; // Don't process other updates while CAPTCHA modal is shown
+    }
+
     // Handle minion updates
     if (data.minionId) {
       setActiveMinions(prev => {
@@ -187,6 +251,73 @@ function SearchPage() {
 
   const handleNewSearch = () => {
     navigate('/');
+  };
+
+  // CAPTCHA modal handlers
+  const handleCaptchaContinue = async () => {
+    if (!currentCaptcha) return;
+
+    try {
+      console.log('👤 User completed CAPTCHA for minion:', currentCaptcha.minionId);
+      
+      // Send continue signal to backend
+      await fetch('/api/captcha-solved', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          minionId: currentCaptcha.minionId,
+          sessionId: currentCaptcha.sessionId,
+          solved: true,
+          currentCaptcha: currentCaptchaIndex + 1
+        }),
+      });
+
+      // Update minion status
+      setActiveMinions(prev => prev.map(m =>
+        m.minionId === currentCaptcha.minionId
+          ? { ...m, status: 'captcha_solved', message: 'CAPTCHA solved, continuing search...' }
+          : m
+      ));
+
+      // Remove current CAPTCHA from queue and move to next
+      setCaptchaQueue(prev => prev.filter((_, index) => index !== currentCaptchaIndex));
+      
+      // Check if there are more CAPTCHAs in the queue
+      if (captchaQueue.length > 1) {
+        // Keep modal open, but don't increment index since we removed current item
+        console.log(`👤 CAPTCHA solved for ${currentCaptcha.minionId}, ${captchaQueue.length - 1} more CAPTCHAs remaining`);
+        // Index stays the same since we removed the current item
+      } else {
+        // All CAPTCHAs completed, close modal
+        console.log('👤 All CAPTCHAs completed, closing modal');
+        setShowCaptchaModal(false);
+        setCurrentCaptchaIndex(0);
+        setCaptchaQueue([]);
+      }
+
+    } catch (error) {
+      console.error('❌ Error notifying CAPTCHA completion:', error);
+      // Keep modal open on error
+    }
+  };
+
+  const handleCaptchaClose = () => {
+    // Mark all minions in queue as failed due to CAPTCHA cancellation
+    captchaQueue.forEach(captcha => {
+      setActiveMinions(prev => prev.map(m =>
+        m.minionId === captcha.minionId
+          ? { ...m, isFailed: true, error: 'CAPTCHA solving cancelled by user' }
+          : m
+      ));
+    });
+    
+    // Clear all CAPTCHA state
+    setShowCaptchaModal(false);
+    setCaptchaQueue([]);
+    setCurrentCaptchaIndex(0);
+    setCaptchaSessions(new Map());
   };
 
   return (
@@ -310,12 +441,12 @@ function SearchPage() {
                             sandbox="allow-same-origin allow-scripts"
                             allow="clipboard-read; clipboard-write"
                           />
-                          <div className={`absolute top-2 right-2 text-white text-xs px-2 py-1 rounded-full flex items-center space-x-1 ${
+                          {/* <div className={`absolute top-2 right-2 text-white text-xs px-2 py-1 rounded-full flex items-center space-x-1 ${
                             isRetrying ? 'bg-yellow-600' : 'bg-blue-600'
                           }`}>
                             <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
                             <span>{isRetrying ? 'RETRY' : 'LIVE'}</span>
-                          </div>
+                          </div> */}
                         </div>
                       ) : isCompleted ? (
                         <div className="flex items-center justify-center" style={{ height: '250px' }}>
@@ -428,6 +559,19 @@ function SearchPage() {
           </div>
         )}
       </main>
+
+      {/* CAPTCHA Solving Modal */}
+      <CaptchaSolvingModal
+        isOpen={showCaptchaModal}
+        onClose={handleCaptchaClose}
+        onContinue={handleCaptchaContinue}
+        browserUrl={currentCaptcha?.debuggerUrl || null}
+        captchaCount={totalCaptchas}
+        currentCaptcha={currentCaptchaIndex + 1}
+        minionId={currentCaptcha?.minionId || null}
+        minionRoute={currentCaptcha ? `${currentCaptcha.departureDate} → ${currentCaptcha.returnDate}` : null}
+        useHumanSolving={isHumanSolvingEnabled()}
+      />
     </div>
   );
 }

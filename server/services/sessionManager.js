@@ -61,6 +61,25 @@ async function createEnhancedSession(options = {}) {
     throw new Error(`Circuit breaker is OPEN. Too many BrowserBase failures. Retry after ${new Date(state.openUntil).toISOString()}`);
   }
 
+  // Configure external proxy if credentials are provided
+  let proxyConfig = enableProxies;
+  
+  if (enableProxies && process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
+    // Use external proxy (e.g., RoundProxies.com)
+    proxyConfig = [
+      {
+        type: "external",
+        server: process.env.PROXY_SERVER,
+        username: process.env.PROXY_USERNAME,
+        password: process.env.PROXY_PASSWORD
+      }
+    ];
+    console.log('🔒 Using external proxy:', process.env.PROXY_SERVER);
+  } else if (enableProxies) {
+    // Use BrowserBase's built-in proxies
+    console.log('🌐 Using BrowserBase built-in proxies');
+  }
+
   try {
     // Create session with retry logic
     const session = await retryWithBackoff(async () => {
@@ -70,8 +89,11 @@ async function createEnhancedSession(options = {}) {
         'https://www.browserbase.com/v1/sessions',
         {
           projectId,
-          proxies: enableProxies,
+          proxies: proxyConfig,
           browserSettings: {
+            // Disable BrowserBase's built-in CAPTCHA solver to use our custom human/AI solver
+            solveCaptchas: false,
+            
             // Note: Context persistence disabled for now
             // BrowserBase requires pre-existing context IDs from their API
             // To enable: First create context, save ID, then reuse it
@@ -111,7 +133,15 @@ async function createEnhancedSession(options = {}) {
       console.log('✅ Session created:', response.data.id);
       console.log(`   Context: ${persistContext ? 'Persistent' : 'Temporary'}`);
       console.log(`   Location: ${countryCode}`);
-      console.log(`   Proxies: ${enableProxies ? 'Enabled' : 'Disabled'}`);
+      
+      // Log proxy configuration
+      if (Array.isArray(proxyConfig) && proxyConfig.length > 0) {
+        console.log(`   Proxies: External (${proxyConfig[0].server})`);
+      } else if (enableProxies) {
+        console.log(`   Proxies: BrowserBase Built-in`);
+      } else {
+        console.log(`   Proxies: Disabled`);
+      }
       
       // Record success in circuit breaker
       browserbaseCircuitBreaker.record(true);
@@ -142,8 +172,8 @@ async function createEnhancedSession(options = {}) {
  */
 async function setupRequestInterception(page, options = {}) {
   const {
-    blockAds = true,
-    blockAnalytics = true,
+    blockAds = false,
+    blockAnalytics = false,
     blockImages = false,
     logRequests = false
   } = options;

@@ -172,6 +172,129 @@ async function waitForHumanCaptchaSolution(page, minionId, sessionId, onProgress
             minionId
           });
           
+          // Wait for page to finish loading after CAPTCHA is solved
+          try {
+            // console.log(`[Minion ${minionId}] Waiting for page to load after CAPTCHA...`);
+            // await page.waitForLoadState('networkidle', { timeout: 30000 });
+            console.log(`[Minion ${minionId}] Page loaded, analyzing with Gemini Computer Use...`);
+            
+            onProgress({
+              status: 'analyzing_with_gemini',
+              message: 'Analyzing page with Gemini Computer Use...',
+              minionId
+            });
+            
+            // Use Gemini Computer Use from browserbaseService to navigate and extract pricing
+            const { runGeminiAgentLoop } = require('./geminiComputerUse');
+            console.log(`[Minion ${minionId}] Starting Gemini agent loop for flight search navigation...`);
+            
+            // Get flight search parameters from the page context
+            // These should be passed from the calling function
+            const searchParams = {
+              departureAirport: page._searchParams?.departureAirport || 'YVR',
+              arrivalAirport: page._searchParams?.arrivalAirport || 'DEL',
+              departureDate: page._searchParams?.departureDate || '2025-11-05',
+              returnDate: page._searchParams?.returnDate || '2025-11-10'
+            };
+            
+            const navigationTask = `You are on the Expedia homepage (expedia.com).
+
+Your task is to search for flights and extract the pricing information.
+
+**Flight Search Details:**
+- From: ${searchParams.departureAirport}
+- To: ${searchParams.arrivalAirport}
+- Departure Date: ${searchParams.departureDate}
+- Return Date: ${searchParams.returnDate}
+- Trip Type: Round trip
+- Passengers: 1 adult
+- Class: Economy
+
+**Step-by-step instructions:**
+
+1. **Navigate to Flights Section:**
+   - Look for and click on the "Flights" tab or button on the homepage
+   - This is usually near the top of the page
+
+2. **Select Round Trip:**
+   - Make sure "Round trip" is selected (not one-way or multi-city)
+
+3. **Fill in Departure Airport:**
+   - Click on the "Leaving from" or "From" field
+   - Type: ${searchParams.departureAirport}
+   - Select the correct airport from the dropdown
+
+4. **Fill in Arrival Airport:**
+   - Click on the "Going to" or "To" field
+   - Type: ${searchParams.arrivalAirport}
+   - Select the correct airport from the dropdown
+
+5. **Select Departure Date:**
+   - Click on the departure date field
+   - Navigate to the correct month if needed
+   - Click on the date: ${searchParams.departureDate}
+
+6. **Select Return Date:**
+   - Click on the return date field
+   - Navigate to the correct month if needed
+   - Click on the date: ${searchParams.returnDate}
+
+7. **Set Passengers (if needed):**
+   - Make sure it's set to 1 adult
+   - Economy class
+
+8. **Click Search:**
+   - Click the "Search" button to search for flights
+
+9. **Wait for Results:**
+   - Wait for the search results page to load
+   - The page should show flight options with prices
+
+10. **Extract Flight Information:**
+    - Once results are loaded, extract all visible flights
+    - Include: airline, price, duration, route, stops
+
+**Important:**
+- Take your time with each step
+- Wait for dropdowns and date pickers to appear before interacting
+- Make sure dates are in the correct format
+- After clicking search, wait for the results page to fully load
+- Extract ALL flights visible on the results page
+
+Return the extracted flight data in the structured JSON format.`;
+
+            // Run Gemini agent loop to navigate and extract pricing information
+            const analysisResult = await runGeminiAgentLoop({
+              page,
+              task: navigationTask,
+              onProgress: (update) => {
+                // Forward Gemini progress updates with minion ID
+                onProgress({
+                  ...update,
+                  minionId
+                });
+              }
+            });
+            
+            console.log(`[Minion ${minionId}] Gemini analysis complete:`, analysisResult);
+            
+            onProgress({
+              status: 'gemini_analysis_complete',
+              message: `Gemini extracted ${analysisResult?.flightData?.flights?.length || 0} flights - continuing search...`,
+              minionId,
+              flightData: analysisResult?.flightData
+            });
+            
+          } catch (error) {
+            console.error(`[Minion ${minionId}] Error during post-CAPTCHA analysis:`, error.message);
+            // Continue anyway - don't fail the search if Gemini analysis fails
+            onProgress({
+              status: 'analysis_error',
+              message: 'Gemini analysis failed - continuing search anyway...',
+              minionId
+            });
+          }
+          
           resolve({ success: true, method: 'human' });
           return;
         }
@@ -345,31 +468,17 @@ function formatDateForExpedia(dateStr) {
 }
 
 /**
- * Run computer use agent to search for flights and extract data
- * Uses AI (OpenAI, Gemini, Claude, etc.) to navigate and extract flight information
+ * Run Gemini agent loop to search for flights and extract data
+ * Centralized function to avoid code duplication
  */
-async function runFlightSearchWithComputerUse({ page, departureAirport, arrivalAirport, departureDate, returnDate, onProgress, sessionId, publicLiveUrl }) {
-  const { runComputerUse } = require('./computerUse');
-  console.log('Starting computer use agent for flight search navigation...');
-  const website = {
-    name: "Kayak",
-    url: "https://www.kayak.com"
-  };
+async function runFlightSearchWithGemini({ page, departureAirport, arrivalAirport, departureDate, returnDate, onProgress, sessionId, publicLiveUrl }) {
+  const { runGeminiAgentLoop } = require('./geminiComputerUse');
+  console.log('Starting Gemini agent loop for flight search navigation...');
   
-  const navigationTask = `Task Description
-----
-You need to browse the ${website.name} website and search for flights. 
+  const navigationTask = `You are on the Expedia homepage (expedia.com).
 
-IMPORTANT: YOU NEED TO KEEP TRYING TILL YOU GET THE FLIGHT DETAILS
+Your task is to search for flights and extract the pricing information.
 
-KNOWN QUIRKS WITH KAYAK'S WEBSITE -
-1. After typing the departure airport and arrival airport input fields, you SHOULD NOT press the enter button. You should wait for the dropdown to show the options, and then click on the appropriate option.
-2. Kayak's departure airport and arrival airport input fields support multiple values. So please ensure you delete any unnecessary values from the input before using the "X" button.
-3. Always ensure the departure date and return date are selected correctly. If the dates are not selected correctly, please try again.
-
----
-
-You need to get the following information from the search page -
 **Flight Search Details:**
 - From: ${departureAirport}
 - To: ${arrivalAirport}
@@ -424,30 +533,16 @@ You need to get the following information from the search page -
     - Include: airline, price, duration, route, stops
 
 **Important:**
-- Look at the page and if any of your previous actions haven't registered, you can try them again.
+- Take your time with each step
 - Wait for dropdowns and date pickers to appear before interacting
 - Make sure dates are in the correct format
 - After clicking search, wait for the results page to fully load
 - Extract ALL flights visible on the results page
 
-Return the extracted flight data in the structured JSON format with this schema:
-{
-  "flights": [
-    {
-      "airline": "Airline name",
-      "price": "$XXX",
-      "duration": "XXh XXm",
-      "stops": "nonstop" or "1 stop" or "2 stops",
-      "departureTime": "HH:MM AM/PM",
-      "arrivalTime": "HH:MM AM/PM",
-      "route": "XXX - YYY"
-    }
-  ],
-  "summary": "Found X flights from XXX to YYY"
-}`;
+Return the extracted flight data in the structured JSON format.`;
 
-  // Run computer use agent to navigate and extract pricing information
-  const result = await runComputerUse({
+  // Run Gemini agent loop to navigate and extract pricing information
+  const geminiResult = await runGeminiAgentLoop({
     page,
     task: navigationTask,
     onProgress: (update) => {
@@ -455,11 +550,11 @@ Return the extracted flight data in the structured JSON format with this schema:
     }
   });
   
-  console.log('Computer use navigation complete:', result);
+  console.log('Gemini navigation complete:', geminiResult);
   
-  if (result.success && result.data) {
-    // AI successfully extracted flight data
-    const flights = result.data.flights || [];
+  if (geminiResult.success && geminiResult.flightData) {
+    // Gemini successfully extracted flight data
+    const flights = geminiResult.flightData.flights || [];
     
     // Ensure all flights have the 'type' field
     flights.forEach(flight => {
@@ -474,7 +569,7 @@ Return the extracted flight data in the structured JSON format with this schema:
     
     return {
       flights: flights,
-      message: result.summary || result.data.summary || `Found ${flights.length} flights`,
+      message: geminiResult.flightData.summary || `Found ${flights.length} flights`,
       searchParams: {
         from: departureAirport,
         to: arrivalAirport,
@@ -486,12 +581,11 @@ Return the extracted flight data in the structured JSON format with this schema:
     };
   }
   
-  throw new Error('Computer use agent did not return flight data');
+  throw new Error('Gemini did not return flight data');
 }
 
 /**
- * Search flights on Expedia using browser automation and AI Computer Use
- * Uses OpenAI's computer use model to navigate and extract flight information
+ * Search flights on Expedia using browser automation and Gemini Computer Use
  * @param {Object} params - Search parameters
  * @param {string} params.departureAirport - Departure airport code (e.g., 'YVR')
  * @param {string} params.arrivalAirport - Arrival airport code (e.g., 'DEL')
@@ -536,46 +630,6 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
     const context = browser.contexts()[0];
     const page = context.pages()[0] || await context.newPage();
     
-    // Prevent new tabs from opening - redirect to current tab instead
-    console.log('Setting up new tab prevention...');
-    
-    // 1️⃣ Intercept new pages (tabs) and redirect to current page
-    context.on('page', async (newPage) => {
-      try {
-        // Wait for the new page to finish its initial navigation
-        await newPage.waitForLoadState('domcontentloaded').catch(() => {});
-
-        const targetUrl = newPage.url();
-        console.log('🚫 New tab detected, redirecting current tab to:', targetUrl);
-
-        // Navigate the *original page* to that URL
-        await page.goto(targetUrl).catch(err => {
-          console.error('Error redirecting to new tab URL:', err.message);
-        });
-
-        // Close the unwanted new tab
-        await newPage.close().catch(err => {
-          console.error('Error closing new tab:', err.message);
-        });
-      } catch (error) {
-        console.error('Error handling new page:', error.message);
-      }
-    });
-
-    // 2️⃣ Override window.open to prevent new tabs at the JavaScript level
-    await context.addInitScript(() => {
-      const origOpen = window.open;
-      window.open = function (url, name, specs) {
-        if (url) {
-          console.warn('🚫 window.open intercepted, navigating current tab to:', url);
-          window.location.href = url;
-        }
-        return null;
-      };
-    });
-    
-    console.log('✅ New tab prevention configured');
-    
     // Store search parameters on page object for use in CAPTCHA handler
     page._searchParams = {
       departureAirport,
@@ -588,46 +642,23 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
 
     // Setup request interception for faster page loads
     await setupRequestInterception(page, {
-      blockAds: true,
+      blockAds: false,
       blockAnalytics: false,
       blockImages: false,
       logRequests: false
     });
 
     // Navigate to Expedia homepage
-    const expediaUrl = 'https://www.kayak.com';
+    const expediaUrl = 'https://www.expedia.com';
 
-    console.log('Navigating to Kayak homepage:', expediaUrl);
-    onProgress({ status: 'navigating', message: 'Navigating to Kayak.com homepage...' });
+    console.log('Navigating to Expedia homepage:', expediaUrl);
+    onProgress({ status: 'navigating', message: 'Navigating to Expedia.com homepage...' });
 
-    // Navigate to Expedia homepage with timeout and fallback
-    try {
-      await page.goto(expediaUrl, { 
-        waitUntil: 'networkidle',  // Less strict than networkidle
-        timeout: 30000  // 60 seconds
-      });
-      console.log('✅ Page navigation successful');
-      
-      // Wait a bit for page to stabilize
-      await page.waitForTimeout(3000);
-    } catch (navError) {
-      console.log('⚠️  Navigation warning:', navError.message);
-      
-      // If navigation fails, try to continue anyway - the page might have partially loaded
-      if (navError.message.includes('Timeout') || navError.message.includes('ERR_TUNNEL')) {
-        console.log('Attempting to continue despite navigation error...');
-        await page.waitForTimeout(5000);  // Give it more time
-        
-        // Check if page has any content
-        const hasContent = await page.evaluate(() => document.body && document.body.children.length > 0);
-        if (!hasContent) {
-          throw new Error('Page failed to load - no content detected');
-        }
-        console.log('✅ Page has content, continuing...');
-      } else {
-        throw navError;  // Re-throw if it's a different error
-      }
-    }
+    // Navigate to Expedia homepage with extended timeout
+    await page.goto(expediaUrl, { 
+      waitUntil: 'networkidle',
+      timeout: 300000  // 5 minutes - allow plenty of time for slow loads
+    });
 
     // Check for CAPTCHA after page load
     console.log('Page loaded, checking for CAPTCHA...');
@@ -659,14 +690,14 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
       );
       console.log(`✅ CAPTCHA solved for minion ${minionId}`);
       
-      // After CAPTCHA is solved, start computer use agent
+      // After CAPTCHA is solved, start Gemini Computer Use loop
       onProgress({
-        status: 'navigating_with_ai',
-        message: 'CAPTCHA solved! Starting AI agent to navigate and extract flights...'
+        status: 'navigating_with_gemini',
+        message: 'CAPTCHA solved! Starting Gemini to navigate and extract flights...'
       });
       
       try {
-        return await runFlightSearchWithComputerUse({
+        return await runFlightSearchWithGemini({
           page,
           departureAirport,
           arrivalAirport,
@@ -677,10 +708,10 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
           publicLiveUrl
         });
       } catch (error) {
-        console.error('Error during AI navigation after CAPTCHA:', error);
+        console.error('Error during Gemini navigation after CAPTCHA:', error);
         onProgress({
           status: 'error',
-          message: 'AI navigation failed after CAPTCHA solving'
+          message: 'Gemini navigation failed after CAPTCHA solving'
         });
         
         await browser.close();
@@ -689,16 +720,16 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
         throw error;
       }
     } else {
-      console.log('✅ No CAPTCHA detected, proceeding with AI navigation...');
+      console.log('✅ No CAPTCHA detected, proceeding with Gemini navigation...');
       
-      // No CAPTCHA - use AI agent to navigate through the UI
+      // No CAPTCHA - use Gemini to navigate through the UI
       onProgress({
-        status: 'navigating_with_ai',
-        message: 'Using AI agent to navigate through Expedia UI...'
+        status: 'navigating_with_gemini',
+        message: 'Using Gemini to navigate through Expedia UI...'
       });
       
       try {
-        return await runFlightSearchWithComputerUse({
+        return await runFlightSearchWithGemini({
           page,
           departureAirport,
           arrivalAirport,
@@ -709,10 +740,10 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
           publicLiveUrl
         });
       } catch (error) {
-        console.error('Error during AI navigation:', error);
+        console.error('Error during Gemini navigation:', error);
         onProgress({
           status: 'error',
-          message: 'AI navigation failed'
+          message: 'Gemini navigation failed - PLACEHOLDER TO DELETE'
         });
         
         await browser.close();
@@ -731,6 +762,268 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
 
   } catch (error) {
     console.error('Error searching flights:', error);
+- From: ${departureAirport}
+- To: ${arrivalAirport}
+- Departure Date: ${departureDate}
+- Return Date: ${returnDate}
+- Trip Type: Round trip
+- Passengers: 1 adult
+- Class: Economy
+
+**Step-by-step instructions:**
+
+1. **Navigate to Flights Section:**
+   - Look for and click on the "Flights" tab or button on the homepage
+   - This is usually near the top of the page
+
+2. **Select Round Trip:**
+   - Make sure "Round trip" is selected (not one-way or multi-city)
+
+3. **Fill in Departure Airport:**
+   - Click on the "Leaving from" or "From" field
+   - Type: ${departureAirport}
+   - Select the correct airport from the dropdown
+
+4. **Fill in Arrival Airport:**
+   - Click on the "Going to" or "To" field
+   - Type: ${arrivalAirport}
+   - Select the correct airport from the dropdown
+
+5. **Select Departure Date:**
+   - Click on the departure date field
+   - Navigate to the correct month if needed
+   - Click on the date: ${departureDate}
+
+6. **Select Return Date:**
+   - Click on the return date field
+   - Navigate to the correct month if needed
+   - Click on the date: ${returnDate}
+
+7. **Set Passengers (if needed):**
+   - Make sure it's set to 1 adult
+   - Economy class
+
+8. **Click Search:**
+   - Click the "Search" button to search for flights
+
+9. **Wait for Results:**
+   - Wait for the search results page to load
+   - The page should show flight options with prices
+
+10. **Extract Flight Information:**
+    - Once results are loaded, extract all visible flights
+    - Include: airline, price, duration, route, stops
+
+**Important:**
+- Take your time with each step
+- Wait for dropdowns and date pickers to appear before interacting
+- Make sure dates are in the correct format
+- After clicking search, wait for the results page to fully load
+- Extract ALL flights visible on the results page
+
+Return the extracted flight data in the structured JSON format.`;
+
+        // Run Gemini agent loop to navigate and extract pricing information
+        const geminiResult = await runGeminiAgentLoop({
+          page,
+          task: navigationTask,
+          onProgress: (update) => {
+            onProgress(update);
+          }
+        });
+        
+        console.log('Gemini navigation complete:', geminiResult);
+        
+        if (geminiResult.success && geminiResult.flightData) {
+          // Gemini successfully extracted flight data
+          const flights = geminiResult.flightData.flights || [];
+          
+          // Ensure all flights have the 'type' field
+          flights.forEach(flight => {
+            flight.type = 'Round trip';
+          });
+          
+          onProgress({
+            status: 'completed',
+            message: `Found ${flights.length} flights`,
+            flights: flights
+          });
+          
+          await browser.close();
+          await stopBrowserSession(sessionId);
+          
+          return {
+            flights: flights,
+            message: geminiResult.flightData.summary || `Found ${flights.length} flights`,
+            searchParams: {
+              from: departureAirport,
+              to: arrivalAirport,
+              departureDate,
+              returnDate
+            },
+            sessionId,
+            debuggerUrl: publicLiveUrl
+          };
+        }
+        
+      } catch (error) {
+        console.error('Error during Gemini navigation after CAPTCHA:', error);
+        onProgress({
+          status: 'error',
+          message: 'Gemini navigation failed after CAPTCHA solving'
+        });
+        
+        await browser.close();
+        await stopBrowserSession(sessionId);
+        
+        throw error;
+      }
+    } else {
+      console.log('✅ No CAPTCHA detected, proceeding with Gemini navigation...');
+      
+      // No CAPTCHA - use Gemini to navigate through the UI
+      onProgress({
+        status: 'navigating_with_gemini',
+        message: 'Using Gemini to navigate through Expedia UI...'
+      });
+      
+      try {
+        const { runGeminiAgentLoop } = require('./geminiComputerUse');
+        console.log('Starting Gemini agent loop for flight search navigation...');
+        
+        const navigationTask = `You are on the Expedia homepage (expedia.com).
+
+Your task is to search for flights and extract the pricing information.
+
+**Flight Search Details:**
+- From: ${departureAirport}
+- To: ${arrivalAirport}
+- Departure Date: ${departureDate}
+- Return Date: ${returnDate}
+- Trip Type: Round trip
+- Passengers: 1 adult
+- Class: Economy
+
+**Step-by-step instructions:**
+
+1. **Navigate to Flights Section:**
+   - Look for and click on the "Flights" tab or button on the homepage
+   - This is usually near the top of the page
+
+2. **Select Round Trip:**
+   - Make sure "Round trip" is selected (not one-way or multi-city)
+
+3. **Fill in Departure Airport:**
+   - Click on the "Leaving from" or "From" field
+   - Type: ${departureAirport}
+   - Select the correct airport from the dropdown
+
+4. **Fill in Arrival Airport:**
+   - Click on the "Going to" or "To" field
+   - Type: ${arrivalAirport}
+   - Select the correct airport from the dropdown
+
+5. **Select Departure Date:**
+   - Click on the departure date field
+   - Navigate to the correct month if needed
+   - Click on the date: ${departureDate}
+
+6. **Select Return Date:**
+   - Click on the return date field
+   - Navigate to the correct month if needed
+   - Click on the date: ${returnDate}
+
+7. **Set Passengers (if needed):**
+   - Make sure it's set to 1 adult
+   - Economy class
+
+8. **Click Search:**
+   - Click the "Search" button to search for flights
+
+9. **Wait for Results:**
+   - Wait for the search results page to load
+   - The page should show flight options with prices
+
+10. **Extract Flight Information:**
+    - Once results are loaded, extract all visible flights
+    - Include: airline, price, duration, route, stops
+
+**Important:**
+- Take your time with each step
+- Wait for dropdowns and date pickers to appear before interacting
+- Make sure dates are in the correct format
+- After clicking search, wait for the results page to fully load
+- Extract ALL flights visible on the results page
+
+Return the extracted flight data in the structured JSON format.`;
+
+        // Run Gemini agent loop to navigate and extract pricing information
+        const geminiResult = await runGeminiAgentLoop({
+          page,
+          task: navigationTask,
+          onProgress: (update) => {
+            onProgress(update);
+          }
+        });
+        
+        console.log('Gemini navigation complete:', geminiResult);
+        
+        if (geminiResult.success && geminiResult.flightData) {
+          // Gemini successfully extracted flight data
+          const flights = geminiResult.flightData.flights || [];
+          
+          // Ensure all flights have the 'type' field
+          flights.forEach(flight => {
+            flight.type = 'Round trip';
+          });
+          
+          onProgress({
+            status: 'completed',
+            message: `Found ${flights.length} flights`,
+            flights: flights
+          });
+          
+          await browser.close();
+          await stopBrowserSession(sessionId);
+          
+          return {
+            flights: flights,
+            message: geminiResult.flightData.summary || `Found ${flights.length} flights`,
+            searchParams: {
+              from: departureAirport,
+              to: arrivalAirport,
+              departureDate,
+              returnDate
+            },
+            sessionId,
+            debuggerUrl: publicLiveUrl
+          };
+        }
+        
+      } catch (error) {
+        console.error('Error during Gemini navigation:', error);
+        onProgress({
+          status: 'error',
+          message: 'Gemini navigation failed'
+        });
+        
+        await browser.close();
+        await stopBrowserSession(sessionId);
+        
+        throw error;
+      }
+    }
+    
+    // If we reach here, something went wrong - both CAPTCHA and no-CAPTCHA paths should return
+    console.error('❌ Unexpected: reached end of function without returning');
+    await browser.close();
+    await stopBrowserSession(sessionId);
+    
+    throw new Error('Flight search failed: no data extracted');
+
+  } catch (error) {
+    console.error('Error searching flights:', error);
+    
     if (browser) {
       await browser.close().catch(err => console.error('Error closing browser:', err));
     }

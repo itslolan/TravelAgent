@@ -1,36 +1,88 @@
 # BrowserBase Proxy Configuration
 
-## ✅ Feature Enabled!
+## ✅ External Proxy Support Added!
 
-I've enabled BrowserBase's managed residential proxies for all browser sessions in your application.
+Your application now supports both BrowserBase's built-in proxies AND external proxies (like RoundProxies.com).
 
-## 🎯 What Changed
+## 🎯 Using External Proxies (RoundProxies.com)
 
-### **Code Update:**
+### **Quick Setup:**
+
+1. **Add to your `.env` file:**
+```bash
+# External Proxy Configuration (e.g., RoundProxies.com)
+PROXY_SERVER=http://your-proxy-server.com:port
+PROXY_USERNAME=your_username
+PROXY_PASSWORD=your_password
+```
+
+2. **Restart your server** - That's it! The system will automatically use your external proxy.
+
+### **How It Works:**
+
+The system automatically detects if external proxy credentials are provided:
 
 ```javascript
-// In browserbaseService.js - createBrowserBaseSession()
+// In sessionManager.js - createEnhancedSession()
 
-const response = await axios.post(
-  'https://www.browserbase.com/v1/sessions',
-  {
-    projectId: projectId,
-    proxies: true, // ← ADDED: Enable BrowserBase managed residential proxies
-    browserSettings: {
-      viewport: {
-        width: 1280,
-        height: 720
-      }
+// Configure external proxy if credentials are provided
+let proxyConfig = enableProxies;
+
+if (enableProxies && process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
+  // Use external proxy (e.g., RoundProxies.com)
+  proxyConfig = [
+    {
+      type: "external",
+      server: process.env.PROXY_SERVER,
+      username: process.env.PROXY_USERNAME,
+      password: process.env.PROXY_PASSWORD
     }
-  },
-  {
-    headers: {
-      'X-BB-API-Key': apiKey,
-      'Content-Type': 'application/json',
-    },
-  }
-);
+  ];
+  console.log('🔒 Using external proxy:', process.env.PROXY_SERVER);
+} else if (enableProxies) {
+  // Use BrowserBase's built-in proxies
+  console.log('🌐 Using BrowserBase built-in proxies');
+}
 ```
+
+### **Example Configuration:**
+
+**For RoundProxies.com:**
+```bash
+PROXY_SERVER=http://proxy.roundproxies.com:8080
+PROXY_USERNAME=your_roundproxies_username
+PROXY_PASSWORD=your_roundproxies_password
+```
+
+**For Other Proxy Providers:**
+```bash
+PROXY_SERVER=http://your-proxy-provider.com:port
+PROXY_USERNAME=your_username
+PROXY_PASSWORD=your_password
+```
+
+## 🔄 Switching Between Proxy Types
+
+### **Option 1: Use External Proxy (RoundProxies.com)**
+Set all three environment variables:
+```bash
+PROXY_SERVER=http://proxy.roundproxies.com:8080
+PROXY_USERNAME=your_username
+PROXY_PASSWORD=your_password
+```
+**Console Output:** `🔒 Using external proxy: http://proxy.roundproxies.com:8080`
+
+### **Option 2: Use BrowserBase Built-in Proxies**
+Leave the proxy variables empty or remove them:
+```bash
+# PROXY_SERVER=
+# PROXY_USERNAME=
+# PROXY_PASSWORD=
+```
+**Console Output:** `🌐 Using BrowserBase built-in proxies`
+
+### **Option 3: Disable All Proxies**
+Set `enableProxies: false` in the code (not recommended for production)
 
 ## 📊 What This Does
 
