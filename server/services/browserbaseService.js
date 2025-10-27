@@ -382,12 +382,9 @@ You need to browse the ${website.name} website and search for flights.
 ----
 1. YOU NEED TO KEEP TRYING TILL YOU GET THE FLIGHT DETAILS
 2. Before clicking on the search button, take a pause to ensure that all the input fields are filled correctly.
-
-KNOWN QUIRKS WITH KAYAK'S WEBSITE -
-1. After typing the departure airport and arrival airport input fields, you SHOULD NOT press the enter button. You should wait for the dropdown to show the options, and then click on the appropriate option.
-2. Kayak's departure airport and arrival airport input fields support multiple values. So please ensure you delete any unnecessary values from the input before using the "X" button.
-3. Always ensure the departure date and return date are selected correctly. If the dates are not selected correctly, please try again.
-4. When filling out the departure date and return date, you need to fill them out one by one (i.e, don't click on the input field for departure date and return date quickly in succession). Click on the input field, click on the desired date from the calendar, before moving to the next field.
+3. After typing in airport fields, wait for dropdowns to appear and select the correct option from the dropdown
+4. When filling dates, click on the field, select the date from the calendar, then move to the next field
+5. Ensure all fields are filled correctly before clicking search
 
 ---
 
@@ -529,17 +526,26 @@ Return the extracted flight data in the structured JSON format with this schema:
 }
 
 /**
- * Search flights on Expedia using browser automation and AI Computer Use
- * Uses OpenAI's computer use model to navigate and extract flight information
+ * Search for flights using BrowserBase browser automation
  * @param {Object} params - Search parameters
- * @param {string} params.departureAirport - Departure airport code (e.g., 'YVR')
- * @param {string} params.arrivalAirport - Arrival airport code (e.g., 'DEL')
+ * @param {string} params.departureAirport - Departure airport code (e.g., 'SFO')
+ * @param {string} params.arrivalAirport - Arrival airport code (e.g., 'LAX')
  * @param {string} params.departureDate - Departure date (YYYY-MM-DD)
  * @param {string} params.returnDate - Return date (YYYY-MM-DD)
  * @param {Function} [params.onProgress] - Optional callback for progress updates
+ * @param {Object} [params.website] - Website configuration (optional)
+ * @param {string} [params.website.name] - Website name (e.g., "Skyscanner")
+ * @param {string} [params.website.url] - Website URL (e.g., "https://www.skyscanner.com")
  * @returns {Promise<Object>} Flight search results
  */
-async function searchFlights({ departureAirport, arrivalAirport, departureDate, returnDate, onProgress = () => {} }) {
+async function searchFlights({ 
+  departureAirport, 
+  arrivalAirport, 
+  departureDate, 
+  returnDate, 
+  onProgress = () => {},
+  website = { name: "Skyscanner", url: "https://www.skyscanner.com" }
+}) {
   let browser = null;
   
   try {
@@ -672,15 +678,15 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
       logRequests: false
     });
 
-    // Navigate to Expedia homepage
-    const expediaUrl = 'https://www.kayak.com';
+    // Navigate to flight search website
+    const websiteUrl = website.url;
 
-    console.log('Navigating to Kayak homepage:', expediaUrl);
-    onProgress({ status: 'navigating', message: 'Navigating to Kayak.com homepage...', minionId: 1 });
+    console.log(`Navigating to ${website.name} homepage:`, websiteUrl);
+    onProgress({ status: 'navigating', message: `Navigating to ${website.name} homepage...`, minionId: 1 });
 
-    // Navigate to Expedia homepage with timeout and fallback
+    // Navigate to website homepage with timeout and fallback
     try {
-      await page.goto(expediaUrl, { 
+      await page.goto(websiteUrl, { 
         waitUntil: 'networkidle',  // Less strict than networkidle
         timeout: 10000  // 10 seconds
       });
@@ -725,7 +731,8 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
         returnDate,
         onProgress,
         sessionId,
-        publicLiveUrl
+        publicLiveUrl,
+        website
       });
     } catch (error) {
       console.error('Error during AI navigation:', error);
