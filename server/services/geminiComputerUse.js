@@ -200,8 +200,8 @@ async function executeAction(page, functionCall, screenWidth, screenHeight) {
         await page.mouse.click(actualX, actualY);
         
         // Wait for page to stabilize after click
-        await page.waitForTimeout(1000); // Brief wait for any animations
-        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
+        await page.waitForTimeout(500); // Brief wait for any animations
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {
           console.log('    Page did not reach networkidle, continuing anyway...');
         });
         break;
@@ -231,21 +231,21 @@ async function executeAction(page, functionCall, screenWidth, screenHeight) {
         }
         
         // Type the text
-        await page.keyboard.type(args.text, { delay: 50 });
+        await page.keyboard.type(args.text, { delay: 20 });
         
         // Press enter if needed
         if (args.press_enter) {
           await page.keyboard.press('Enter');
           
           // Wait for page to load after pressing enter
-          await page.waitForTimeout(1000);
-          await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
+          await page.waitForTimeout(500);
+          await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {
             console.log('    Page did not reach networkidle after Enter, continuing anyway...');
           });
         }
         
         // Brief wait for any UI updates after typing
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(300);
         break;
       }
         

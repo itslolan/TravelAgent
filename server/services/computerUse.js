@@ -91,7 +91,7 @@ async function runComputerUse({ page, task, onProgress = () => {} }) {
   async function getClickableElements() {
     try {
       // Wait for page to be ready (not navigating)
-      await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
+      await page.waitForLoadState('domcontentloaded', { timeout: 2000 }).catch(() => {});
       
       return await page.evaluate(() => {
       const elements = [];
@@ -659,7 +659,7 @@ ${clickableElementsText}`
       // Wait for any navigation to complete after actions
       // This prevents "Execution context was destroyed" errors
       try {
-        await page.waitForLoadState('networkidle', { timeout: 30000 });
+        await page.waitForLoadState('networkidle', { timeout: 5000 });
       } catch (error) {
         // Ignore timeout - page might not be navigating
       }
@@ -733,8 +733,8 @@ ${updatedClickableElementsText}`
       console.error(`Error in iteration ${iteration + 1}:`, error);
       
       if (error.message.includes('rate limit')) {
-        console.log('Rate limit hit, waiting 10 seconds...');
-        await page.waitForTimeout(10000);
+        console.log('Rate limit hit, waiting 3 seconds...');
+        await page.waitForTimeout(3000);
         continue; // Retry this iteration
       }
       

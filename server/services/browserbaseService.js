@@ -687,8 +687,8 @@ async function searchFlights({
     // Navigate to website homepage with timeout and fallback
     try {
       await page.goto(websiteUrl, { 
-        waitUntil: 'networkidle',  // Less strict than networkidle
-        timeout: 10000  // 10 seconds
+        waitUntil: 'networkidle',
+        timeout: 8000  // 8 seconds
       });
       console.log('✅ Page navigation successful');
       
@@ -700,7 +700,7 @@ async function searchFlights({
       // If navigation fails, try to continue anyway - the page might have partially loaded
       if (navError.message.includes('Timeout') || navError.message.includes('ERR_TUNNEL')) {
         console.log('Attempting to continue despite navigation error...');
-        await page.waitForTimeout(5000);  // Give it more time
+        await page.waitForTimeout(3000);  // Give it more time
         
         // Check if page has any content
         const hasContent = await page.evaluate(() => document.body && document.body.children.length > 0);

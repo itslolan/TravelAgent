@@ -94,7 +94,7 @@ async function executeAction(page, action) {
         }
         
         // Type the text
-        await page.keyboard.type(args.text, { delay: 50 });
+        await page.keyboard.type(args.text, { delay: 20 });
         
         // Press enter if needed
         if (args.press_enter) {
@@ -140,8 +140,8 @@ async function executeAction(page, action) {
     }
     
     // Wait for potential navigations/renders
-    await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
+    await page.waitForTimeout(500);
     
     return { success: true };
   } catch (error) {
@@ -376,7 +376,7 @@ Return ONE action at a time. Do not try to do multiple actions in one response.`
       }
       
       // Wait for page to respond after the action
-      await page.waitForTimeout(2000).catch(() => {
+      await page.waitForTimeout(1000).catch(() => {
         console.warn('  -> Timeout wait failed, continuing...');
       });
       
