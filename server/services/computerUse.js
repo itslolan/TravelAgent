@@ -205,6 +205,7 @@ Available actions:
 - scroll: Scroll the page up or down
 - wait: Wait for a specified duration
 - navigate: Navigate to a URL
+- report_captcha: Report when you detect a CAPTCHA challenge
 
 When you see a screenshot, analyze it and decide what action to take next to complete the task.
 Return your response in JSON format with the action details.
@@ -220,7 +221,18 @@ Important:
   - If you typed text, verify it appears in the correct field
   - If something didn't work, try a different approach or adjust your coordinates
 - Wait for page loads after navigation or clicks
-- Extract data when you've completed the task`
+- Extract data when you've completed the task
+
+**CAPTCHA DETECTION:**
+- **ALWAYS check each screenshot for CAPTCHA challenges before taking any other action**
+- If you see ANY of the following, immediately call report_captcha:
+  - reCAPTCHA checkbox ("I'm not a robot")
+  - hCaptcha challenges
+  - Cloudflare verification pages ("Checking your browser...")
+  - Image selection challenges (e.g., "Select all images with traffic lights")
+  - Any other human verification challenge
+- Do NOT attempt to solve CAPTCHAs yourself - always report them
+- After reporting a CAPTCHA, a human will solve it and you can continue`
 
     },
     {
@@ -350,6 +362,28 @@ ${clickableElementsText}`
                   summary: { type: 'string', description: 'Summary of what was accomplished' }
                 },
                 required: ['data']
+              }
+            }
+          },
+          {
+            type: 'function',
+            function: {
+              name: 'report_captcha',
+              description: 'Report that a CAPTCHA challenge has been detected on the screen. Call this when you see any CAPTCHA, reCAPTCHA, hCaptcha, or other human verification challenge that requires solving.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  captcha_type: { 
+                    type: 'string', 
+                    enum: ['recaptcha', 'hcaptcha', 'cloudflare', 'other'],
+                    description: 'Type of CAPTCHA detected' 
+                  },
+                  description: { 
+                    type: 'string', 
+                    description: 'Brief description of what you see (e.g., "I see a reCAPTCHA checkbox asking to verify I am human")' 
+                  }
+                },
+                required: ['captcha_type', 'description']
               }
             }
           }
@@ -562,6 +596,35 @@ ${clickableElementsText}`
                 success: true,
                 data: args.data,
                 summary: args.summary,
+                iterations: iteration + 1
+              };
+              
+            case 'report_captcha':
+              console.log('🤖 AI detected CAPTCHA:', args.captcha_type, '-', args.description);
+              
+              // Send CAPTCHA detection event to frontend
+              onProgress({
+                status: 'captcha_detected',
+                message: `CAPTCHA detected: ${args.description}`,
+                captchaType: args.captcha_type,
+                minionId: 1
+              });
+              
+              result = { 
+                success: true, 
+                message: 'CAPTCHA reported. Waiting for human to solve...',
+                pause_execution: true
+              };
+              
+              // Record in history
+              actionHistory.push(`Detected ${args.captcha_type} CAPTCHA: ${args.description}`);
+              
+              // Return special flag to pause execution
+              return {
+                success: false,
+                captcha_detected: true,
+                captcha_type: args.captcha_type,
+                description: args.description,
                 iterations: iteration + 1
               };
               

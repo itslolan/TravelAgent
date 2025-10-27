@@ -347,14 +347,32 @@ function formatDateForExpedia(dateStr) {
 /**
  * Run computer use agent to search for flights and extract data
  * Uses AI (OpenAI, Gemini, Claude, etc.) to navigate and extract flight information
+ * @param {Object} params - Parameters
+ * @param {Object} params.page - Playwright page object
+ * @param {string} params.departureAirport - Departure airport code
+ * @param {string} params.arrivalAirport - Arrival airport code
+ * @param {string} params.departureDate - Departure date (YYYY-MM-DD)
+ * @param {string} params.returnDate - Return date (YYYY-MM-DD)
+ * @param {Function} params.onProgress - Progress callback
+ * @param {string} params.sessionId - Browser session ID
+ * @param {string} params.publicLiveUrl - Live view URL
+ * @param {Object} params.website - Website configuration (optional)
+ * @param {string} params.website.name - Website name (e.g., "Skyscanner")
+ * @param {string} params.website.url - Website URL (e.g., "https://www.skyscanner.com")
  */
-async function runFlightSearchWithComputerUse({ page, departureAirport, arrivalAirport, departureDate, returnDate, onProgress, sessionId, publicLiveUrl }) {
+async function runFlightSearchWithComputerUse({ 
+  page, 
+  departureAirport, 
+  arrivalAirport, 
+  departureDate, 
+  returnDate, 
+  onProgress, 
+  sessionId, 
+  publicLiveUrl,
+  website = { name: "Skyscanner", url: "https://www.skyscanner.com" }
+}) {
   const { runComputerUse } = require('./computerUse');
-  console.log('Starting computer use agent for flight search navigation...');
-  const website = {
-    name: "Kayak",
-    url: "https://www.kayak.com"
-  };
+  console.log(`Starting computer use agent for flight search navigation on ${website.name}...`);
   
   const navigationTask = `Task Description
 ----
@@ -455,11 +473,28 @@ Return the extracted flight data in the structured JSON format with this schema:
     page,
     task: navigationTask,
     onProgress: (update) => {
-      onProgress(update);
+      // Forward all progress updates, adding session info for CAPTCHA detection
+      onProgress({
+        ...update,
+        sessionId,
+        debuggerUrl: publicLiveUrl,
+        departureDate,
+        returnDate
+      });
     }
   });
   
   console.log('Computer use navigation complete:', result);
+  
+  // Check if AI detected a CAPTCHA
+  if (result.captcha_detected) {
+    console.log('🤖 AI detected CAPTCHA, waiting for human to solve...');
+    
+    // The captcha_detected event was already sent via onProgress
+    // Now we need to wait for the human to solve it
+    // For now, return an error - the frontend will show the modal
+    throw new Error('CAPTCHA detected - human intervention required');
+  }
   
   if (result.success && result.data) {
     // AI successfully extracted flight data
@@ -509,7 +544,7 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
   
   try {
     // Create browser session (BrowserBase or HyperBrowser)
-    onProgress({ status: 'creating_session', message: 'Creating browser session...' });
+    onProgress({ status: 'creating_session', message: 'Creating browser session...', minionId: 1 });
     console.log('Creating browser session...');
     
     const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserSession();
@@ -530,12 +565,15 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
     onProgress({ 
       status: 'session_created', 
       message: 'Browser session created',
+      minionId: 1,
       sessionId,
-      debuggerUrl: publicLiveUrl
+      debuggerUrl: publicLiveUrl,
+      departureDate,
+      returnDate
     });
 
     // Connect to browser using Playwright
-    onProgress({ status: 'connecting', message: 'Connecting to browser...' });
+    onProgress({ status: 'connecting', message: 'Connecting to browser...', minionId: 1 });
     browser = await chromium.connectOverCDP(connectUrl);
     const context = browser.contexts()[0];
     const page = context.pages()[0] || await context.newPage();
@@ -543,21 +581,41 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
     // Prevent new tabs from opening - redirect to current tab instead
     console.log('Setting up new tab prevention...');
     
-    // 1️⃣ Intercept new pages (tabs) and redirect to current page
+    // 1️⃣ Intercept new pages (tabs) - only redirect if same domain, ignore cross-domain popups
     context.on('page', async (newPage) => {
       try {
         // Wait for the new page to finish its initial navigation
         await newPage.waitForLoadState('domcontentloaded').catch(() => {});
 
         const targetUrl = newPage.url();
-        console.log('🚫 New tab detected, redirecting current tab to:', targetUrl);
+        const currentUrl = page.url();
+        
+        // Extract domains for comparison
+        const getCurrentDomain = (url) => {
+          try {
+            return new URL(url).hostname;
+          } catch {
+            return '';
+          }
+        };
+        
+        const targetDomain = getCurrentDomain(targetUrl);
+        const currentDomain = getCurrentDomain(currentUrl);
+        
+        // Only redirect if same domain (likely legitimate navigation)
+        if (targetDomain === currentDomain) {
+          console.log(`🔄 Same-domain new tab detected (${targetDomain}), redirecting current tab to:`, targetUrl);
+          
+          // Navigate the *original page* to that URL
+          await page.goto(targetUrl).catch(err => {
+            console.error('Error redirecting to new tab URL:', err.message);
+          });
+        } else {
+          // Different domain - likely popup ad, silently ignore
+          console.log(`🚫 Cross-domain popup blocked: ${targetDomain} (current: ${currentDomain})`);
+        }
 
-        // Navigate the *original page* to that URL
-        await page.goto(targetUrl).catch(err => {
-          console.error('Error redirecting to new tab URL:', err.message);
-        });
-
-        // Close the unwanted new tab
+        // Always close the unwanted new tab
         await newPage.close().catch(err => {
           console.error('Error closing new tab:', err.message);
         });
@@ -571,8 +629,24 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
       const origOpen = window.open;
       window.open = function (url, name, specs) {
         if (url) {
-          console.warn('🚫 window.open intercepted, navigating current tab to:', url);
-          window.location.href = url;
+          // Check if same domain
+          const getCurrentDomain = (urlString) => {
+            try {
+              return new URL(urlString, window.location.href).hostname;
+            } catch {
+              return '';
+            }
+          };
+          
+          const targetDomain = getCurrentDomain(url);
+          const currentDomain = window.location.hostname;
+          
+          if (targetDomain === currentDomain) {
+            console.warn('🔄 window.open intercepted (same domain), navigating current tab to:', url);
+            window.location.href = url;
+          } else {
+            console.warn('🚫 window.open blocked (cross-domain):', url);
+          }
         }
         return null;
       };
@@ -588,7 +662,7 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
       returnDate
     };
 
-    onProgress({ status: 'connected', message: 'Connected to browser, preparing search...' });
+    onProgress({ status: 'connected', message: 'Connected to browser, preparing search...', minionId: 1 });
 
     // Setup request interception for faster page loads
     await setupRequestInterception(page, {
@@ -602,7 +676,7 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
     const expediaUrl = 'https://www.kayak.com';
 
     console.log('Navigating to Kayak homepage:', expediaUrl);
-    onProgress({ status: 'navigating', message: 'Navigating to Kayak.com homepage...' });
+    onProgress({ status: 'navigating', message: 'Navigating to Kayak.com homepage...', minionId: 1 });
 
     // Navigate to Expedia homepage with timeout and fallback
     try {
@@ -633,97 +707,37 @@ async function searchFlights({ departureAirport, arrivalAirport, departureDate, 
       }
     }
 
-    // Check for CAPTCHA after page load
-    console.log('Page loaded, checking for CAPTCHA...');
-    onProgress({ status: 'checking_captcha', message: 'Checking for CAPTCHA challenges...' });
+    // Start AI agent - it will detect CAPTCHAs automatically
+    console.log('✅ Page loaded, starting AI agent...');
     
-    const captchaInfo = await detectCaptcha(page);
-    if (captchaInfo.detected) {
-      console.log('🤖 CAPTCHA detected:', captchaInfo);
-
-      // Generate minion ID for this search
-      const minionId = `minion_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-      const route = {
-        departure: `${departureAirport}-${arrivalAirport}`,
-        return: `${arrivalAirport}-${departureAirport}`
-      };
-
-      // Handle CAPTCHA
-      const captchaResult = await handleCaptcha(
-        page, 
-        captchaInfo, 
-        sessionId, 
-        publicLiveUrl, 
-        onProgress, 
-        minionId,
-        1,
-        1,
-        route.departure,
-        route.return
-      );
-      console.log(`✅ CAPTCHA solved for minion ${minionId}`);
-      
-      // After CAPTCHA is solved, start computer use agent
+    onProgress({
+      status: 'navigating_with_ai',
+      message: 'AI agent is navigating through the website...',
+      minionId: 1
+    });
+    
+    try {
+      return await runFlightSearchWithComputerUse({
+        page,
+        departureAirport,
+        arrivalAirport,
+        departureDate,
+        returnDate,
+        onProgress,
+        sessionId,
+        publicLiveUrl
+      });
+    } catch (error) {
+      console.error('Error during AI navigation:', error);
       onProgress({
-        status: 'navigating_with_ai',
-        message: 'CAPTCHA solved! Starting AI agent to navigate and extract flights...'
+        status: 'error',
+        message: 'AI navigation failed'
       });
       
-      try {
-        return await runFlightSearchWithComputerUse({
-          page,
-          departureAirport,
-          arrivalAirport,
-          departureDate,
-          returnDate,
-          onProgress,
-          sessionId,
-          publicLiveUrl
-        });
-      } catch (error) {
-        console.error('Error during AI navigation after CAPTCHA:', error);
-        onProgress({
-          status: 'error',
-          message: 'AI navigation failed after CAPTCHA solving'
-        });
-        
-        await browser.close();
-        await stopBrowserSession(sessionId);
-        
-        throw error;
-      }
-    } else {
-      console.log('✅ No CAPTCHA detected, proceeding with AI navigation...');
+      await browser.close();
+      await stopBrowserSession(sessionId);
       
-      // No CAPTCHA - use AI agent to navigate through the UI
-      onProgress({
-        status: 'navigating_with_ai',
-        message: 'Using AI agent to navigate through Expedia UI...'
-      });
-      
-      try {
-        return await runFlightSearchWithComputerUse({
-          page,
-          departureAirport,
-          arrivalAirport,
-          departureDate,
-          returnDate,
-          onProgress,
-          sessionId,
-          publicLiveUrl
-        });
-      } catch (error) {
-        console.error('Error during AI navigation:', error);
-        onProgress({
-          status: 'error',
-          message: 'AI navigation failed'
-        });
-        
-        await browser.close();
-        await stopBrowserSession(sessionId);
-        
-        throw error;
-      }
+      throw error;
     }
     
     // If we reach here, something went wrong - both CAPTCHA and no-CAPTCHA paths should return
