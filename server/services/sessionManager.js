@@ -52,7 +52,8 @@ async function createEnhancedSession(options = {}) {
     userId = null,
     countryCode = 'US',
     persistContext = true,
-    enableProxies = true
+    enableProxies = true,
+    proxyConfig = null
   } = options;
 
   // Check circuit breaker
@@ -62,11 +63,11 @@ async function createEnhancedSession(options = {}) {
   }
 
   // Configure external proxy if credentials are provided
-  let proxyConfig = enableProxies;
-  
+  let envProxyConfig = enableProxies;
+
   if (enableProxies && process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
-    // Use external proxy (e.g., RoundProxies.com)
-    proxyConfig = [
+    // Use external proxy from environment variables (e.g., RoundProxies.com)
+    envProxyConfig = [
       {
         type: "external",
         server: process.env.PROXY_SERVER,
@@ -74,7 +75,7 @@ async function createEnhancedSession(options = {}) {
         password: process.env.PROXY_PASSWORD
       }
     ];
-    console.log('🔒 Using external proxy:', process.env.PROXY_SERVER);
+    console.log('🔒 Using external proxy from env:', process.env.PROXY_SERVER);
   } else if (enableProxies) {
     // Use BrowserBase's built-in proxies
     console.log('🌐 Using BrowserBase built-in proxies');
@@ -84,12 +85,29 @@ async function createEnhancedSession(options = {}) {
     // Create session with retry logic
     const session = await retryWithBackoff(async () => {
       console.log('🌐 Creating BrowserBase session with enhanced features...');
-      
+
+      // Determine proxy configuration
+      // Priority: UI config > environment config > BrowserBase built-in
+      let proxySettings;
+      if (proxyConfig && proxyConfig.provider !== 'browserbase') {
+        // Custom proxy from UI (Bright Data or other)
+        const { host, port, username, password } = proxyConfig;
+        const proxyUrl = `http://${username}:${password}@${host}:${port}`;
+        console.log(`🔌 Using custom proxy from UI: ${host}:${port}`);
+        proxySettings = {
+          type: 'custom',
+          server: proxyUrl
+        };
+      } else {
+        // Use environment-based proxy config or BrowserBase built-in
+        proxySettings = envProxyConfig;
+      }
+
       const response = await axios.post(
         'https://www.browserbase.com/v1/sessions',
         {
           projectId,
-          proxies: proxyConfig,
+          proxies: proxySettings,
           browserSettings: {
             // Disable BrowserBase's built-in CAPTCHA solver to use our custom human/AI solver
             solveCaptchas: false,
@@ -133,10 +151,12 @@ async function createEnhancedSession(options = {}) {
       console.log('✅ Session created:', response.data.id);
       console.log(`   Context: ${persistContext ? 'Persistent' : 'Temporary'}`);
       console.log(`   Location: ${countryCode}`);
-      
+
       // Log proxy configuration
-      if (Array.isArray(proxyConfig) && proxyConfig.length > 0) {
-        console.log(`   Proxies: External (${proxyConfig[0].server})`);
+      if (proxyConfig && proxyConfig.provider !== 'browserbase') {
+        console.log(`   Proxy: Custom from UI (${proxyConfig.provider}) - ${proxyConfig.host}:${proxyConfig.port}`);
+      } else if (Array.isArray(envProxyConfig) && envProxyConfig.length > 0) {
+        console.log(`   Proxies: External from env (${envProxyConfig[0].server})`);
       } else if (enableProxies) {
         console.log(`   Proxies: BrowserBase Built-in`);
       } else {

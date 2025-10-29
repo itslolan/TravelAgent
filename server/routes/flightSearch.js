@@ -22,16 +22,17 @@ router.post('/search-flights', async (req, res) => {
 
     if (searchMode === 'flexible') {
       // Flexible date search
-      const { departureAirport, arrivalAirport, month, year, tripDuration } = req.body;
+      const { departureAirport, arrivalAirport, month, year, tripDuration, proxyConfig } = req.body;
 
       // Validate input
       if (!departureAirport || !arrivalAirport || month === undefined || !year || !tripDuration) {
-        return res.status(400).json({ 
-          error: 'Missing required fields for flexible search' 
+        return res.status(400).json({
+          error: 'Missing required fields for flexible search'
         });
       }
 
       console.log('Flexible search:', { departureAirport, arrivalAirport, month, year, tripDuration });
+      console.log('🔌 Proxy config:', proxyConfig);
 
       const results = await runFlexibleSearch({
         departureAirport,
@@ -39,6 +40,7 @@ router.post('/search-flights', async (req, res) => {
         month,
         year,
         tripDuration,
+        proxyConfig,
         onProgress: sendUpdate
       });
 
@@ -51,16 +53,17 @@ router.post('/search-flights', async (req, res) => {
 
     } else {
       // Fixed date search - search 3 websites in parallel
-      const { departureAirport, arrivalAirport, departureDate, returnDate } = req.body;
+      const { departureAirport, arrivalAirport, departureDate, returnDate, proxyConfig } = req.body;
 
       // Validate input
       if (!departureAirport || !arrivalAirport || !departureDate || !returnDate) {
-        return res.status(400).json({ 
-          error: 'Missing required fields: departureAirport, arrivalAirport, departureDate, returnDate' 
+        return res.status(400).json({
+          error: 'Missing required fields: departureAirport, arrivalAirport, departureDate, returnDate'
         });
       }
 
       console.log('Fixed date search - launching 3 minions:', { departureAirport, arrivalAirport, departureDate, returnDate });
+      console.log('🔌 Proxy config:', proxyConfig);
 
       // Define 3 websites to search in parallel
       const websites = [
@@ -69,13 +72,14 @@ router.post('/search-flights', async (req, res) => {
         { name: 'Google Flights', url: 'https://www.google.com/travel/flights', minionId: 3 }
       ];
 
-      // Launch all 3 searches in parallel
-      const searchPromises = websites.map(website => 
+      // Launch all 3 searches in parallel with proxy config
+      const searchPromises = websites.map(website =>
         searchFlightsWithProgress({
           departureAirport,
           arrivalAirport,
           departureDate,
           returnDate,
+          proxyConfig,
           website: { name: website.name, url: website.url },
           onProgress: (update) => {
             // Add minionId to all progress updates
@@ -100,7 +104,7 @@ router.post('/search-flights', async (req, res) => {
 
       // Wait for all searches to complete
       const results = await Promise.allSettled(searchPromises);
-      
+
       // Collect successful results
       const allFlights = [];
       results.forEach((result, index) => {
@@ -132,6 +136,8 @@ router.post('/search-flights', async (req, res) => {
 router.post('/test-captcha', async (req, res) => {
   try {
     console.log('🧪 Received CAPTCHA test request');
+    const { proxyConfig } = req.body;
+    console.log('🔌 Proxy config:', proxyConfig);
 
     // Set up SSE (Server-Sent Events)
     res.setHeader('Content-Type', 'text/event-stream');
@@ -193,6 +199,7 @@ router.post('/test-captcha', async (req, res) => {
     // Call BrowserBase service with progress updates
     await searchFlightsWithProgress({
       ...testParams,
+      proxyConfig,
       onProgress: (update) => {
         // Add test mode flag and forward all updates
         sendUpdate({

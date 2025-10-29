@@ -7,7 +7,7 @@ import { isHumanSolvingEnabled, getCaptchaMode } from '../config/captchaConfig';
 function SearchPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { searchParams, testMode: isTestMode } = location.state || {};
+  const { searchParams, testMode: isTestMode, proxyConfig } = location.state || {};
 
   const [loading, setLoading] = useState(true);
   const [results, setResults] = useState(null);
@@ -57,9 +57,10 @@ function SearchPage() {
       setStatusMessage('Initializing search...');
 
       const endpoint = testMode ? '/api/test-captcha' : '/api/search-flights';
-      const requestBody = testMode ? {} : searchParams;
+      const requestBody = testMode ? { proxyConfig } : { ...searchParams, proxyConfig };
 
       console.log('🚀 Starting search with:', requestBody);
+      console.log('🔌 Proxy config:', proxyConfig);
       console.log('🌐 API URL:', endpoint);
 
       const response = await fetch(endpoint, {

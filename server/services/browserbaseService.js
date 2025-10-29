@@ -269,7 +269,8 @@ async function createBrowserBaseSession(options = {}) {
       userId: options.userId || null,
       countryCode: options.countryCode || 'US',
       persistContext: options.persistContext !== false, // Default true
-      enableProxies: options.enableProxies !== false   // Default true
+      enableProxies: options.enableProxies !== false,   // Default true
+      proxyConfig: options.proxyConfig || null
     });
 
     const sessionId = sessionData.id;
@@ -579,23 +580,24 @@ Return the extracted flight data in the structured JSON format with this schema:
  * @param {string} [params.website.url] - Website URL (e.g., "https://www.skyscanner.com")
  * @returns {Promise<Object>} Flight search results
  */
-async function searchFlights({ 
-  departureAirport, 
-  arrivalAirport, 
-  departureDate, 
-  returnDate, 
+async function searchFlightsWithProgress({
+  departureAirport,
+  arrivalAirport,
+  departureDate,
+  returnDate,
+  proxyConfig,
   onProgress = () => {},
   website = { name: "Skyscanner", url: "https://www.skyscanner.com" }
 }) {
   let browser = null;
-  
+
   try {
-    // Create browser session (BrowserBase or HyperBrowser)
-    onProgress({ status: 'creating_session', message: 'Creating browser session...', minionId: 1 });
-    console.log('Creating browser session...');
-    
-    const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserSession();
-    console.log('Browser session created:', sessionId);
+    // Create BrowserBase session with proxy config
+    onProgress({ status: 'creating_session', message: 'Creating BrowserBase session...' });
+    console.log('Creating BrowserBase session...');
+
+    const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserBaseSession({ proxyConfig });
+    console.log('BrowserBase session created:', sessionId);
     console.log('Live session view:', debuggerUrl);
     
     // Try to get live view URL if not already available

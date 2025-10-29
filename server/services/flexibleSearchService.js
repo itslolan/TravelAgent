@@ -4,12 +4,13 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 /**
  * Run a search - no timeout, let it run as long as needed
  */
-async function runSearch({ 
-  departureAirport, 
-  arrivalAirport, 
-  departureDate, 
+async function runSearch({
+  departureAirport,
+  arrivalAirport,
+  departureDate,
   returnDate,
   minionId,
+  proxyConfig,
   onProgress
 }) {
   try {
@@ -18,6 +19,7 @@ async function runSearch({
       arrivalAirport,
       departureDate,
       returnDate,
+      proxyConfig,
       onProgress
     });
 
@@ -121,6 +123,7 @@ async function runFlexibleSearch({
   month,
   year,
   tripDuration,
+  proxyConfig,
   onProgress
 }) {
   console.log(`\n=== Starting Flexible Search ===`);
@@ -232,22 +235,23 @@ async function runFlexibleSearch({
 
   // Start minions with configurable delay between each
   const searchPromises = [];
-  
+
   for (let i = 0; i < minionProgressHandlers.length; i++) {
     const { combo, minionId, handler } = minionProgressHandlers[i];
-    
-    // Start the search
+
+    // Start the search with proxy config
     const searchPromise = runSearch({
       departureAirport,
       arrivalAirport,
       departureDate: combo.departureDate,
       returnDate: combo.returnDate,
       minionId,
+      proxyConfig,
       onProgress: handler
     });
-    
+
     searchPromises.push(searchPromise);
-    
+
     // Add delay before starting next minion (except for the last one)
     if (i < minionProgressHandlers.length - 1 && minionSessionDelay > 0) {
       console.log(`⏳ Waiting ${minionSessionDelay}ms before starting next minion...`);
