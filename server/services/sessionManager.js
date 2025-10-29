@@ -52,7 +52,8 @@ async function createEnhancedSession(options = {}) {
     userId = null,
     countryCode = 'US',
     persistContext = true,
-    enableProxies = true
+    enableProxies = true,
+    proxyConfig = null
   } = options;
 
   // Check circuit breaker
@@ -65,12 +66,28 @@ async function createEnhancedSession(options = {}) {
     // Create session with retry logic
     const session = await retryWithBackoff(async () => {
       console.log('🌐 Creating BrowserBase session with enhanced features...');
-      
+
+      // Determine proxy configuration
+      let proxySettings;
+      if (proxyConfig && proxyConfig.provider !== 'browserbase') {
+        // Custom proxy (Bright Data or other)
+        const { host, port, username, password } = proxyConfig;
+        const proxyUrl = `http://${username}:${password}@${host}:${port}`;
+        console.log(`🔌 Using custom proxy: ${host}:${port}`);
+        proxySettings = {
+          type: 'custom',
+          server: proxyUrl
+        };
+      } else {
+        // Use BrowserBase built-in proxies
+        proxySettings = enableProxies;
+      }
+
       const response = await axios.post(
         'https://www.browserbase.com/v1/sessions',
         {
           projectId,
-          proxies: enableProxies,
+          proxies: proxySettings,
           browserSettings: {
             // Note: Context persistence disabled for now
             // BrowserBase requires pre-existing context IDs from their API
@@ -111,7 +128,11 @@ async function createEnhancedSession(options = {}) {
       console.log('✅ Session created:', response.data.id);
       console.log(`   Context: ${persistContext ? 'Persistent' : 'Temporary'}`);
       console.log(`   Location: ${countryCode}`);
-      console.log(`   Proxies: ${enableProxies ? 'Enabled' : 'Disabled'}`);
+      if (proxyConfig && proxyConfig.provider !== 'browserbase') {
+        console.log(`   Proxy: Custom (${proxyConfig.provider}) - ${proxyConfig.host}:${proxyConfig.port}`);
+      } else {
+        console.log(`   Proxies: ${enableProxies ? 'BrowserBase Built-in' : 'Disabled'}`);
+      }
       
       // Record success in circuit breaker
       browserbaseCircuitBreaker.record(true);

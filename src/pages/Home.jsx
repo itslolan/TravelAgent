@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plane, Calendar, MapPin, MonitorPlay } from 'lucide-react';
+import { Plane, Calendar, MapPin, MonitorPlay, Settings } from 'lucide-react';
 
 function Home() {
   const navigate = useNavigate();
   const [searchMode, setSearchMode] = useState('flexible');
+  const [showProxyConfig, setShowProxyConfig] = useState(false);
   const [formData, setFormData] = useState({
     departureAirport: 'YVR',
     arrivalAirport: 'DEL',
@@ -16,6 +17,23 @@ function Home() {
     year: new Date().getFullYear(),
     tripDuration: 25
   });
+
+  // Proxy configuration
+  const [proxyConfig, setProxyConfig] = useState(() => {
+    const saved = localStorage.getItem('proxyConfig');
+    return saved ? JSON.parse(saved) : {
+      provider: 'browserbase', // 'browserbase' or 'brightdata' or 'custom'
+      host: '',
+      port: '',
+      username: '',
+      password: ''
+    };
+  });
+
+  // Save proxy config to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('proxyConfig', JSON.stringify(proxyConfig));
+  }, [proxyConfig]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -43,13 +61,13 @@ function Home() {
           ...formData
         };
 
-    // Navigate to search page with parameters
-    navigate('/search', { state: { searchParams, testMode: false } });
+    // Navigate to search page with parameters and proxy config
+    navigate('/search', { state: { searchParams, testMode: false, proxyConfig } });
   };
 
   const handleTestCaptcha = () => {
-    // Navigate to search page in test mode
-    navigate('/search', { state: { searchParams: null, testMode: true } });
+    // Navigate to search page in test mode with proxy config
+    navigate('/search', { state: { searchParams: null, testMode: true, proxyConfig } });
   };
 
   return (
@@ -57,11 +75,112 @@ function Home() {
       {/* Header */}
       <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center space-x-3">
-            <Plane className="w-8 h-8 text-indigo-600" />
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Trip Agent</h1>
-              <p className="mt-1 text-gray-600">AI-powered flight booking assistant</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <Plane className="w-8 h-8 text-indigo-600" />
+              <div>
+                <h1 className="text-3xl font-bold text-gray-900">Trip Agent</h1>
+                <p className="mt-1 text-gray-600">AI-powered flight booking assistant</p>
+              </div>
+            </div>
+
+            {/* Proxy Configuration Button */}
+            <div className="relative">
+              <button
+                onClick={() => setShowProxyConfig(!showProxyConfig)}
+                className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
+                title="Proxy Configuration"
+              >
+                <Settings className="w-5 h-5 text-gray-700" />
+                <span className="text-sm font-medium text-gray-700">
+                  Proxy: {proxyConfig.provider === 'browserbase' ? 'BrowserBase' : proxyConfig.provider === 'brightdata' ? 'Bright Data' : 'Custom'}
+                </span>
+              </button>
+
+              {/* Proxy Configuration Dropdown */}
+              {showProxyConfig && (
+                <div className="absolute right-0 mt-2 w-96 bg-white rounded-lg shadow-xl border border-gray-200 p-4 z-50">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Proxy Configuration</h3>
+
+                  {/* Provider Selection */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Provider</label>
+                    <select
+                      value={proxyConfig.provider}
+                      onChange={(e) => setProxyConfig(prev => ({ ...prev, provider: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    >
+                      <option value="browserbase">BrowserBase (Built-in)</option>
+                      <option value="brightdata">Bright Data</option>
+                      <option value="custom">Custom Proxy</option>
+                    </select>
+                  </div>
+
+                  {/* Custom Proxy Fields */}
+                  {(proxyConfig.provider === 'brightdata' || proxyConfig.provider === 'custom') && (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Host</label>
+                        <input
+                          type="text"
+                          value={proxyConfig.host}
+                          onChange={(e) => setProxyConfig(prev => ({ ...prev, host: e.target.value }))}
+                          placeholder="proxy.example.com"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
+                        <input
+                          type="text"
+                          value={proxyConfig.port}
+                          onChange={(e) => setProxyConfig(prev => ({ ...prev, port: e.target.value }))}
+                          placeholder="8080"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                        <input
+                          type="text"
+                          value={proxyConfig.username}
+                          onChange={(e) => setProxyConfig(prev => ({ ...prev, username: e.target.value }))}
+                          placeholder="username"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <input
+                          type="password"
+                          value={proxyConfig.password}
+                          onChange={(e) => setProxyConfig(prev => ({ ...prev, password: e.target.value }))}
+                          placeholder="password"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex justify-end space-x-2">
+                    <button
+                      onClick={() => setShowProxyConfig(false)}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition"
+                    >
+                      Close
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowProxyConfig(false);
+                        alert('Proxy configuration saved! It will be used for the next search.');
+                      }}
+                      className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

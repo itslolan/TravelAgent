@@ -22,16 +22,17 @@ router.post('/search-flights', async (req, res) => {
 
     if (searchMode === 'flexible') {
       // Flexible date search
-      const { departureAirport, arrivalAirport, month, year, tripDuration } = req.body;
+      const { departureAirport, arrivalAirport, month, year, tripDuration, proxyConfig } = req.body;
 
       // Validate input
       if (!departureAirport || !arrivalAirport || month === undefined || !year || !tripDuration) {
-        return res.status(400).json({ 
-          error: 'Missing required fields for flexible search' 
+        return res.status(400).json({
+          error: 'Missing required fields for flexible search'
         });
       }
 
       console.log('Flexible search:', { departureAirport, arrivalAirport, month, year, tripDuration });
+      console.log('🔌 Proxy config:', proxyConfig);
 
       const results = await runFlexibleSearch({
         departureAirport,
@@ -39,6 +40,7 @@ router.post('/search-flights', async (req, res) => {
         month,
         year,
         tripDuration,
+        proxyConfig,
         onProgress: sendUpdate
       });
 
@@ -51,16 +53,17 @@ router.post('/search-flights', async (req, res) => {
 
     } else {
       // Fixed date search (original behavior)
-      const { departureAirport, arrivalAirport, departureDate, returnDate } = req.body;
+      const { departureAirport, arrivalAirport, departureDate, returnDate, proxyConfig } = req.body;
 
       // Validate input
       if (!departureAirport || !arrivalAirport || !departureDate || !returnDate) {
-        return res.status(400).json({ 
-          error: 'Missing required fields: departureAirport, arrivalAirport, departureDate, returnDate' 
+        return res.status(400).json({
+          error: 'Missing required fields: departureAirport, arrivalAirport, departureDate, returnDate'
         });
       }
 
       console.log('Fixed date search:', { departureAirport, arrivalAirport, departureDate, returnDate });
+      console.log('🔌 Proxy config:', proxyConfig);
 
       // Call BrowserBase service to search flights with progress updates
       await searchFlightsWithProgress({
@@ -68,6 +71,7 @@ router.post('/search-flights', async (req, res) => {
         arrivalAirport,
         departureDate,
         returnDate,
+        proxyConfig,
         onProgress: sendUpdate
       });
     }
@@ -83,6 +87,8 @@ router.post('/search-flights', async (req, res) => {
 router.post('/test-captcha', async (req, res) => {
   try {
     console.log('🧪 Received CAPTCHA test request');
+    const { proxyConfig } = req.body;
+    console.log('🔌 Proxy config:', proxyConfig);
 
     // Set up SSE (Server-Sent Events)
     res.setHeader('Content-Type', 'text/event-stream');
@@ -144,6 +150,7 @@ router.post('/test-captcha', async (req, res) => {
     // Call BrowserBase service with progress updates
     await searchFlightsWithProgress({
       ...testParams,
+      proxyConfig,
       onProgress: (update) => {
         // Add test mode flag and forward all updates
         sendUpdate({

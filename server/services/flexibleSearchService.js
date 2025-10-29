@@ -4,12 +4,13 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 /**
  * Run a search - no timeout, let it run as long as needed
  */
-async function runSearch({ 
-  departureAirport, 
-  arrivalAirport, 
-  departureDate, 
+async function runSearch({
+  departureAirport,
+  arrivalAirport,
+  departureDate,
   returnDate,
   minionId,
+  proxyConfig,
   onProgress
 }) {
   try {
@@ -18,6 +19,7 @@ async function runSearch({
       arrivalAirport,
       departureDate,
       returnDate,
+      proxyConfig,
       onProgress
     });
 
@@ -121,6 +123,7 @@ async function runFlexibleSearch({
   month,
   year,
   tripDuration,
+  proxyConfig,
   onProgress
 }) {
   console.log(`\n=== Starting Flexible Search ===`);
@@ -236,6 +239,7 @@ async function runFlexibleSearch({
         departureDate: combo.departureDate,
         returnDate: combo.returnDate,
         minionId,
+        proxyConfig,
         onProgress: handler
       })
     )
