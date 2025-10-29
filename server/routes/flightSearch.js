@@ -52,7 +52,7 @@ router.post('/search-flights', async (req, res) => {
       });
 
     } else {
-      // Fixed date search (original behavior)
+      // Fixed date search - search 3 websites in parallel
       const { departureAirport, arrivalAirport, departureDate, returnDate, proxyConfig } = req.body;
 
       // Validate input
@@ -62,17 +62,66 @@ router.post('/search-flights', async (req, res) => {
         });
       }
 
-      console.log('Fixed date search:', { departureAirport, arrivalAirport, departureDate, returnDate });
+      console.log('Fixed date search - launching 3 minions:', { departureAirport, arrivalAirport, departureDate, returnDate });
       console.log('🔌 Proxy config:', proxyConfig);
 
-      // Call BrowserBase service to search flights with progress updates
-      await searchFlightsWithProgress({
-        departureAirport,
-        arrivalAirport,
-        departureDate,
-        returnDate,
-        proxyConfig,
-        onProgress: sendUpdate
+      // Define 3 websites to search in parallel
+      const websites = [
+        { name: 'Skyscanner', url: 'https://www.skyscanner.com', minionId: 1 },
+        { name: 'Expedia', url: 'https://www.expedia.com', minionId: 2 },
+        { name: 'Google Flights', url: 'https://www.google.com/travel/flights', minionId: 3 }
+      ];
+
+      // Launch all 3 searches in parallel with proxy config
+      const searchPromises = websites.map(website =>
+        searchFlightsWithProgress({
+          departureAirport,
+          arrivalAirport,
+          departureDate,
+          returnDate,
+          proxyConfig,
+          website: { name: website.name, url: website.url },
+          onProgress: (update) => {
+            // Add minionId to all progress updates
+            sendUpdate({
+              ...update,
+              minionId: website.minionId,
+              websiteName: website.name
+            });
+          }
+        }).catch(error => {
+          console.error(`Error searching ${website.name}:`, error);
+          sendUpdate({
+            status: 'error',
+            message: `${website.name} search failed: ${error.message}`,
+            minionId: website.minionId,
+            websiteName: website.name,
+            error: error.message
+          });
+          return { success: false, website: website.name, error: error.message };
+        })
+      );
+
+      // Wait for all searches to complete
+      const results = await Promise.allSettled(searchPromises);
+
+      // Collect successful results
+      const allFlights = [];
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled' && result.value && result.value.flights) {
+          allFlights.push(...result.value.flights.map(flight => ({
+            ...flight,
+            source: websites[index].name
+          })));
+        }
+      });
+
+      // Send final combined results
+      sendUpdate({
+        status: 'completed',
+        message: `Search complete! Found ${allFlights.length} total flights across all websites`,
+        flights: allFlights,
+        searchMode: 'fixed'
       });
     }
 

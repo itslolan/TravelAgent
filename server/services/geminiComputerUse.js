@@ -1,10 +1,10 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// Official Gemini Computer Use model from documentation
-// https://ai.google.dev/gemini-api/docs/computer-use
-const GEMINI_COMPUTER_USE_MODEL = 'gemini-2.5-computer-use-preview-10-2025';
+// Using Gemini 2.0 Flash Experimental (latest available model)
+// This model supports function calling and vision
+const GEMINI_MODEL = 'gemini-2.0-flash-exp';
 const GEMINI_VISION_MODEL = 'gemini-2.0-flash-exp'; // For page readiness checks
-const MAX_ITERATIONS = 10;
+const MAX_ITERATIONS = 30; // Maximum iterations for Gemini agent loop
 // Recommended screen size from documentation
 const SCREEN_WIDTH = 1440;
 const SCREEN_HEIGHT = 900;
@@ -198,6 +198,12 @@ async function executeAction(page, functionCall, screenWidth, screenHeight) {
         const actualY = denormalizeY(args.y, screenHeight);
         console.log(`    Denormalized: (${args.x}, ${args.y}) -> (${actualX}, ${actualY})`);
         await page.mouse.click(actualX, actualY);
+        
+        // Wait for page to stabilize after click
+        await page.waitForTimeout(500); // Brief wait for any animations
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {
+          console.log('    Page did not reach networkidle, continuing anyway...');
+        });
         break;
       }
         
@@ -225,12 +231,21 @@ async function executeAction(page, functionCall, screenWidth, screenHeight) {
         }
         
         // Type the text
-        await page.keyboard.type(args.text, { delay: 50 });
+        await page.keyboard.type(args.text, { delay: 20 });
         
         // Press enter if needed
         if (args.press_enter) {
           await page.keyboard.press('Enter');
+          
+          // Wait for page to load after pressing enter
+          await page.waitForTimeout(500);
+          await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {
+            console.log('    Page did not reach networkidle after Enter, continuing anyway...');
+          });
         }
+        
+        // Brief wait for any UI updates after typing
+        await page.waitForTimeout(300);
         break;
       }
         
@@ -329,7 +344,7 @@ async function runGeminiAgentLoop({ page, task, onProgress }) {
   
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ 
-    model: GEMINI_COMPUTER_USE_MODEL,
+    model: GEMINI_MODEL,
     generationConfig: {
       responseMimeType: "application/json",
       responseSchema: {

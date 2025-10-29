@@ -5,6 +5,209 @@ const { solveCaptchaWithPythonService } = require('./geminiPythonService');
 const { searchMonitor } = require('./searchMonitor');
 const { validateProxyHealth, retryWithBackoff, browserbaseCircuitBreaker } = require('./proxyHealthCheck');
 const { createEnhancedSession, setupRequestInterception } = require('./sessionManager');
+const { isHumanSolvingEnabled, logCaptchaEvent, captchaConfig } = require('../config/captchaConfig');
+const { createHyperBrowserSession, stopHyperBrowserSession } = require('./hyperBrowserService');
+
+/**
+ * Get the configured browser provider
+ * @returns {string} 'browserbase' or 'hyperbrowser'
+ */
+function getBrowserProvider() {
+  const provider = process.env.BROWSER_PROVIDER || 'browserbase';
+  if (!['browserbase', 'hyperbrowser'].includes(provider)) {
+    console.warn(`⚠️  Invalid BROWSER_PROVIDER: ${provider}, defaulting to 'browserbase'`);
+    return 'browserbase';
+  }
+  return provider;
+}
+
+/**
+ * Detect if current page contains a CAPTCHA
+ */
+async function detectCaptcha(page) {
+  try {
+    // Common CAPTCHA selectors and text patterns
+    const captchaSelectors = [
+      '[data-testid*="captcha"]',
+      '[class*="captcha"]',
+      '[id*="captcha"]',
+      '.recaptcha-checkbox',
+      '#recaptcha',
+      '.g-recaptcha',
+      '.h-captcha',
+      '.cf-turnstile',
+      '[aria-label*="captcha"]',
+      '[title*="captcha"]'
+    ];
+
+    const captchaTextPatterns = [
+      /verify.*human/i,
+      /prove.*human/i,
+      /captcha/i,
+      /security.*check/i,
+      /robot.*verification/i,
+      /automated.*traffic/i,
+      /suspicious.*activity/i
+    ];
+
+    // Check for CAPTCHA elements
+    for (const selector of captchaSelectors) {
+      const element = await page.$(selector).catch(() => null);
+      if (element) {
+        logCaptchaEvent('detected_by_selector', { selector });
+        return {
+          detected: true,
+          type: 'element_based',
+          selector,
+          method: 'dom_selector'
+        };
+      }
+    }
+
+    // Check page text for CAPTCHA patterns
+    const pageText = await page.textContent('body').catch(() => '');
+    for (const pattern of captchaTextPatterns) {
+      if (pattern.test(pageText)) {
+        logCaptchaEvent('detected_by_text', { pattern: pattern.toString() });
+        return {
+          detected: true,
+          type: 'text_based',
+          pattern: pattern.toString(),
+          method: 'text_analysis'
+        };
+      }
+    }
+
+    // Check for common CAPTCHA iframe patterns
+    const iframes = await page.$$('iframe').catch(() => []);
+    for (const iframe of iframes) {
+      const src = await iframe.getAttribute('src').catch(() => '');
+      if (src && (src.includes('recaptcha') || src.includes('hcaptcha') || src.includes('captcha'))) {
+        logCaptchaEvent('detected_by_iframe', { src });
+        return {
+          detected: true,
+          type: 'iframe_based',
+          src,
+          method: 'iframe_analysis'
+        };
+      }
+    }
+
+    return { detected: false };
+  } catch (error) {
+    console.error('Error detecting CAPTCHA:', error);
+    return { detected: false, error: error.message };
+  }
+}
+
+/**
+ * Handle CAPTCHA based on current configuration
+ */
+async function handleCaptcha(page, captchaInfo, sessionId, debuggerUrl, onProgress, minionId = 'main', totalCaptchas = 1, currentCaptcha = 1, departureRoute = '', returnRoute = '') {
+  logCaptchaEvent('handling_captcha', { 
+    type: captchaInfo.type, 
+    method: captchaInfo.method,
+    minionId,
+    totalCaptchas,
+    currentCaptcha,
+    route: `${departureRoute} → ${returnRoute}`,
+    mode: isHumanSolvingEnabled() ? 'human' : 'ai'
+  });
+
+  if (isHumanSolvingEnabled()) {
+    // Human solving mode - emit event for frontend modal
+    const message = `CAPTCHA detected for ${departureRoute} → ${returnRoute} - waiting for human to solve...`;
+      
+    onProgress({
+      status: 'captcha_detected',
+      message,
+      minionId,
+      sessionId,
+      debuggerUrl,
+      captchaType: captchaInfo.type,
+      captchaCount: totalCaptchas,
+      currentCaptcha: currentCaptcha,
+      departureDate: departureRoute,
+      returnDate: returnRoute
+    });
+
+    // Wait for human to solve CAPTCHA, then analyze with Gemini
+    return await waitForHumanCaptchaSolution(page, minionId, sessionId, onProgress, 300000, currentCaptcha);
+  } else {
+    // AI solving mode - use Python service
+    const message = `CAPTCHA detected for ${departureRoute} → ${returnRoute} - AI is solving...`;
+      
+    onProgress({
+      status: 'captcha_solving',
+      message,
+      minionId,
+      departureDate: departureRoute,
+      returnDate: returnRoute
+    });
+
+    return await solveCaptchaWithPythonService(page, onProgress);
+  }
+}
+
+/**
+ * Wait for human to solve CAPTCHA, then analyze page with Gemini
+ */
+async function waitForHumanCaptchaSolution(page, minionId, sessionId, onProgress, maxWaitTime = 300000, currentCaptcha = 1) {
+  const startTime = Date.now();
+  const pollInterval = 2000; // Check every 2 seconds
+
+  return new Promise((resolve, reject) => {
+    const checkInterval = setInterval(async () => {
+      try {
+        // Check if CAPTCHA has been solved via API
+        const response = await axios.get(`http://localhost:${process.env.PORT || 3001}/api/captcha-status/${minionId}`);
+        
+        if (response.data.solved) {
+          clearInterval(checkInterval);
+          logCaptchaEvent('human_solved', { minionId, sessionId, duration: Date.now() - startTime });
+          
+          onProgress({
+            status: 'captcha_solved',
+            message: 'CAPTCHA solved by human - waiting for page to load...',
+            minionId
+          });
+          
+          resolve({ success: true, method: 'human' });
+          return;
+        }
+
+        // Check timeout
+        if (Date.now() - startTime > maxWaitTime) {
+          clearInterval(checkInterval);
+          logCaptchaEvent('human_timeout', { minionId, sessionId, duration: Date.now() - startTime });
+          
+          onProgress({
+            status: 'captcha_timeout',
+            message: 'CAPTCHA solving timed out',
+            minionId
+          });
+          
+          reject(new Error('CAPTCHA solving timed out'));
+          return;
+        }
+
+        // Update progress with remaining time
+        const remainingTime = Math.max(0, maxWaitTime - (Date.now() - startTime));
+        const remainingMinutes = Math.ceil(remainingTime / 60000);
+        
+        onProgress({
+          status: 'captcha_waiting',
+          message: `Waiting for human to solve CAPTCHA (${remainingMinutes}m remaining)...`,
+          minionId
+        });
+
+      } catch (error) {
+        console.error('Error checking CAPTCHA status:', error);
+        // Continue waiting on API errors
+      }
+    }, pollInterval);
+  });
+}
 
 /**
  * Get live view URL for a session using BrowserBase Live View API
@@ -73,9 +276,6 @@ async function createBrowserBaseSession(options = {}) {
     const sessionId = sessionData.id;
     const connectUrl = `wss://connect.browserbase.com?apiKey=${apiKey}&sessionId=${sessionId}`;
     
-    // Log the session creation response
-    console.log('BrowserBase session created:', sessionId);
-    
     // Use the Live View API to get the embeddable URL
     // This is the proper way according to BrowserBase documentation
     const liveViewUrl = await getLiveViewUrl(sessionId);
@@ -102,6 +302,39 @@ async function createBrowserBaseSession(options = {}) {
 }
 
 /**
+ * Create a browser session using the configured provider
+ * Unified function that works with both BrowserBase and HyperBrowser
+ * @param {Object} options - Session configuration options
+ * @returns {Promise<Object>} Session details with connectUrl, sessionId, debuggerUrl
+ */
+async function createBrowserSession(options = {}) {
+  const provider = getBrowserProvider();
+  
+  console.log(`🌐 Using browser provider: ${provider.toUpperCase()}`);
+  
+  if (provider === 'hyperbrowser') {
+    return await createHyperBrowserSession(options);
+  } else {
+    return await createBrowserBaseSession(options);
+  }
+}
+
+/**
+ * Stop a browser session using the configured provider
+ * @param {string} sessionId - The session ID to stop
+ */
+async function stopBrowserSession(sessionId) {
+  const provider = getBrowserProvider();
+  
+  if (provider === 'hyperbrowser') {
+    await stopHyperBrowserSession(sessionId);
+  } else {
+    // BrowserBase sessions auto-close when browser disconnects
+    console.log('✅ BrowserBase session will auto-close on disconnect');
+  }
+}
+
+/**
  * Formats date from YYYY-MM-DD to MM/DD/YYYY for Expedia
  */
 function formatDateForExpedia(dateStr) {
@@ -113,169 +346,253 @@ function formatDateForExpedia(dateStr) {
 }
 
 /**
- * Search flights on Expedia using BrowserBase
+ * Run computer use agent to search for flights and extract data
+ * Uses AI (OpenAI, Gemini, Claude, etc.) to navigate and extract flight information
+ * @param {Object} params - Parameters
+ * @param {Object} params.page - Playwright page object
+ * @param {string} params.departureAirport - Departure airport code
+ * @param {string} params.arrivalAirport - Arrival airport code
+ * @param {string} params.departureDate - Departure date (YYYY-MM-DD)
+ * @param {string} params.returnDate - Return date (YYYY-MM-DD)
+ * @param {Function} params.onProgress - Progress callback
+ * @param {string} params.sessionId - Browser session ID
+ * @param {string} params.publicLiveUrl - Live view URL
+ * @param {Object} params.website - Website configuration (optional)
+ * @param {string} params.website.name - Website name (e.g., "Skyscanner")
+ * @param {string} params.website.url - Website URL (e.g., "https://www.skyscanner.com")
  */
-async function searchFlights({ departureAirport, arrivalAirport, departureDate, returnDate }) {
-  let browser = null;
+async function runFlightSearchWithComputerUse({ 
+  page, 
+  departureAirport, 
+  arrivalAirport, 
+  departureDate, 
+  returnDate, 
+  onProgress, 
+  sessionId, 
+  publicLiveUrl,
+  website = { name: "Skyscanner", url: "https://www.skyscanner.com" }
+}) {
+  const { runComputerUse } = require('./computerUse');
+  console.log(`Starting computer use agent for flight search navigation on ${website.name}...`);
   
-  try {
-    // Create BrowserBase session
-    console.log('Creating BrowserBase session...');
-    const { sessionId, connectUrl, debuggerUrl } = await createBrowserBaseSession();
-    console.log('BrowserBase session created:', sessionId);
-    console.log('Live session view:', debuggerUrl);
+  const navigationTask = `Task Description
+----
+You need to browse the ${website.name} website and search for flights. 
 
-    // Connect to BrowserBase using Playwright
-    browser = await chromium.connectOverCDP(connectUrl);
-    const context = browser.contexts()[0];
-    const page = context.pages()[0] || await context.newPage();
+**IMPORTANT**
+----
+1. YOU NEED TO KEEP TRYING TILL YOU GET THE FLIGHT DETAILS
+2. Before clicking on the search button, take a pause to ensure that all the input fields are filled correctly.
+3. After typing in airport fields, wait for dropdowns to appear and select the correct option from the dropdown
+4. When filling dates, click on the field, select the date from the calendar, then move to the next field
+5. Ensure all fields are filled correctly before clicking search
 
-    // Setup request interception for faster page loads
-    await setupRequestInterception(page, {
-      blockAds: true,
-      blockAnalytics: true,
-      blockImages: false,
-      logRequests: false
-    });
+---
 
-    // Format dates for Expedia
-    const formattedDepartureDate = formatDateForExpedia(departureDate);
-    const formattedReturnDate = formatDateForExpedia(returnDate);
+You need to get the following information from the search page -
+**Flight Search Details:**
+- From: ${departureAirport}
+- To: ${arrivalAirport}
+- Departure Date: ${departureDate}
+- Return Date: ${returnDate}
+- Trip Type: Round trip
+- Passengers: 1 adult
+- Class: Economy
 
-    // Build Expedia URL
-    const expediaUrl = `https://www.expedia.com/Flights-Search?` +
-      `flight-type=on&` +
-      `mode=search&` +
-      `trip=roundtrip&` +
-      `leg1=from:${departureAirport},to:${arrivalAirport},departure:${formattedDepartureDate}TANYT&` +
-      `leg2=from:${arrivalAirport},to:${departureAirport},departure:${formattedReturnDate}TANYT&` +
-      `passengers=adults:1,children:0,infantinlap:N&` +
-      `options=cabinclass:economy`;
+**Step-by-step instructions:**
 
-    console.log('Navigating to Expedia:', expediaUrl);
+1. **Navigate to Flights Section:**
+   - Look for and click on the "Flights" tab or button on the homepage
+   - This is usually near the top of the page
 
-    // Navigate to Expedia search results with extended timeout
-    await page.goto(expediaUrl, { 
-      waitUntil: 'networkidle',
-      timeout: 300000  // 5 minutes - allow plenty of time for slow loads
-    });
+2. **Select Round Trip:**
+   - Make sure "Round trip" is selected (not one-way or multi-city)
 
-    console.log('Page loaded, registering with async search monitor...');
+3. **Fill in Departure Airport:**
+   - Click on the "Leaving from" or "From" field
+   - Type: ${departureAirport}
+   - Select the correct airport from the dropdown
 
-    // Generate unique search ID
-    const searchId = `search_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Register this search with the global monitor
-    // The monitor will check this search in parallel with others every 30s
-    searchMonitor.registerSearch(searchId, page, null);
-    
-    console.log(`✅ Search registered as ${searchId}`);
-    console.log('⏰ Monitor will check this search every 30 seconds (non-blocking)');
-    
-    // Wait for search to complete (non-blocking wait)
-    const result = await searchMonitor.waitForSearch(searchId, 1800000); // 30 min timeout
-    
-    console.log(`📊 Search ${searchId} monitoring complete:`, result);
-    
-    // Unregister the search
-    searchMonitor.unregisterSearch(searchId);
+4. **Fill in Arrival Airport:**
+   - Click on the "Going to" or "To" field
+   - Type: ${arrivalAirport}
+   - Select the correct airport from the dropdown
 
-    // Small stabilization buffer
-    console.log('\n🎯 Final stabilization...');
-    await page.waitForTimeout(3000);
+5. **Select Departure Date:**
+   - Click on the departure date field
+   - Navigate to the correct month if needed
+   - Click on the date: ${departureDate}
 
-    // Extract flight information
-    console.log('Extracting flight data...');
-    const flights = await page.evaluate(() => {
-      const flightCards = [];
-      
-      // Try multiple selectors to find flight listings
-      const listingContainers = document.querySelectorAll('[data-test-id="listing-main"], .uitk-card, [data-test-id="offer-listing"]');
-      
-      listingContainers.forEach((card, index) => {
-        if (index >= 5) return; // Limit to top 5 results
-        
-        try {
-          // Extract price
-          const priceElement = card.querySelector('[data-test-id="listing-price-dollars"], .uitk-text-emphasis-theme, [data-test-id="price-total-amount"]');
-          const price = priceElement ? priceElement.textContent.trim() : 'Price not available';
-          
-          // Extract airline
-          const airlineElement = card.querySelector('[data-test-id="airline-name"], .uitk-text-default-theme');
-          const airline = airlineElement ? airlineElement.textContent.trim() : 'Unknown airline';
-          
-          // Extract duration
-          const durationElement = card.querySelector('[data-test-id="duration"], .duration-text');
-          const duration = durationElement ? durationElement.textContent.trim() : 'Duration not available';
-          
-          // Extract route info
-          const routeElement = card.querySelector('[data-test-id="flight-info"]');
-          const route = routeElement ? routeElement.textContent.trim() : '';
-          
-          flightCards.push({
-            airline,
-            price,
-            duration,
-            route: route || `${airline} flight`,
-            type: 'Round trip'
-          });
-        } catch (err) {
-          console.error('Error parsing flight card:', err);
-        }
+6. **Select Return Date:**
+   - Click on the return date field
+   - Navigate to the correct month if needed
+   - Click on the date: ${returnDate}
+
+7. **Set Passengers (if needed):**
+   - Make sure it's set to 1 adult
+   - Economy class
+
+8. **Click Search:**
+   - Click the "Search" button to search for flights
+
+9. **Wait for Results:**
+   - Wait for the search results page to load
+   - The page should show flight options with prices
+
+10. **Extract Flight Information:**
+    - Once results are loaded, extract all visible flights
+    - Include: airline, price, duration, route, stops
+
+**Important:**
+- Look at the page and if any of your previous actions haven't registered, you can try them again.
+- Wait for dropdowns and date pickers to appear before interacting
+- Make sure dates are in the correct format
+- After clicking search, wait for the results page to fully load
+- Extract ALL flights visible on the results page
+
+Return the extracted flight data in the structured JSON format with this schema:
+{
+  "flights": [
+    {
+      "airline": "Airline name",
+      "price": "$XXX",
+      "duration": "XXh XXm",
+      "stops": "nonstop" or "1 stop" or "2 stops",
+      "departureTime": "HH:MM AM/PM",
+      "arrivalTime": "HH:MM AM/PM",
+      "route": "XXX - YYY"
+    }
+  ],
+  "summary": "Found X flights from XXX to YYY"
+}`;
+
+  // Run computer use agent to navigate and extract pricing information
+  const result = await runComputerUse({
+    page,
+    task: navigationTask,
+    onProgress: (update) => {
+      // Forward all progress updates, adding session info for CAPTCHA detection
+      onProgress({
+        ...update,
+        sessionId,
+        debuggerUrl: publicLiveUrl,
+        departureDate,
+        returnDate
       });
-      
-      return flightCards;
+    }
+  });
+  
+  console.log('Computer use navigation complete:', result);
+  
+  // Check if AI detected a CAPTCHA
+  if (result.captcha_detected) {
+    console.log('🤖 AI detected CAPTCHA, waiting for human to solve...');
+    
+    // The captcha_detected event was already sent via onProgress
+    // Now wait for the human to solve it
+    const captchaInfo = {
+      detected: true,
+      type: result.captcha_type || 'unknown',
+      description: result.description || 'CAPTCHA detected by AI'
+    };
+    
+    // Wait for human to solve CAPTCHA
+    const captchaSolved = await waitForHumanCaptchaSolution(
+      page, 
+      1, // minionId
+      sessionId, 
+      onProgress, 
+      300000, // 5 minutes timeout
+      1 // currentCaptcha
+    );
+    
+    if (!captchaSolved) {
+      throw new Error('CAPTCHA solving timed out');
+    }
+    
+    console.log('✅ CAPTCHA solved, resuming AI navigation...');
+    
+    // After CAPTCHA is solved, restart the computer use agent
+    onProgress({
+      status: 'navigating_with_ai',
+      message: 'CAPTCHA solved! Resuming AI navigation...',
+      minionId: 1
     });
-
-    console.log(`Found ${flights.length} flights`);
-
-    // Take screenshot for debugging (optional)
-    await page.screenshot({ 
-      path: '/tmp/expedia-results.png',
-      fullPage: false 
-    }).catch(err => console.log('Screenshot failed:', err));
-
-    await browser.close();
-
+    
+    // Restart computer use with the same task
+    return await runComputerUse({
+      page,
+      task: navigationTask,
+      onProgress: (update) => {
+        onProgress({
+          ...update,
+          sessionId,
+          debuggerUrl: publicLiveUrl,
+          departureDate,
+          returnDate
+        });
+      }
+    });
+  }
+  
+  if (result.success && result.data) {
+    // AI successfully extracted flight data
+    const flights = result.data.flights || [];
+    
+    // Ensure all flights have the 'type' field
+    flights.forEach(flight => {
+      flight.type = 'Round trip';
+    });
+    
+    onProgress({
+      status: 'completed',
+      message: `Found ${flights.length} flights`,
+      flights: flights
+    });
+    
     return {
-      flights: flights.length > 0 ? flights : [],
-      message: flights.length > 0 
-        ? `Found ${flights.length} flight options` 
-        : 'No flights found. The page structure may have changed or no results are available.',
+      flights: flights,
+      message: result.summary || result.data.summary || `Found ${flights.length} flights`,
       searchParams: {
         from: departureAirport,
         to: arrivalAirport,
-        departureDate: formattedDepartureDate,
-        returnDate: formattedReturnDate
+        departureDate,
+        returnDate
       },
       sessionId,
-      debuggerUrl
+      debuggerUrl: publicLiveUrl
     };
-
-  } catch (error) {
-    console.error('Error searching flights:', error);
-    
-    if (browser) {
-      await browser.close().catch(err => console.error('Error closing browser:', err));
-    }
-
-    // Provide helpful error messages
-    if (error.message.includes('BROWSERBASE_API_KEY')) {
-      throw new Error('BrowserBase API credentials not configured. Please check your .env file.');
-    }
-    
-    throw new Error(`Flight search failed: ${error.message}`);
   }
+  
+  throw new Error('Computer use agent did not return flight data');
 }
 
 /**
- * Search flights with progress updates via callback
+ * Search for flights using BrowserBase browser automation
+ * @param {Object} params - Search parameters
+ * @param {string} params.departureAirport - Departure airport code (e.g., 'SFO')
+ * @param {string} params.arrivalAirport - Arrival airport code (e.g., 'LAX')
+ * @param {string} params.departureDate - Departure date (YYYY-MM-DD)
+ * @param {string} params.returnDate - Return date (YYYY-MM-DD)
+ * @param {Function} [params.onProgress] - Optional callback for progress updates
+ * @param {Object} [params.website] - Website configuration (optional)
+ * @param {string} [params.website.name] - Website name (e.g., "Skyscanner")
+ * @param {string} [params.website.url] - Website URL (e.g., "https://www.skyscanner.com")
+ * @returns {Promise<Object>} Flight search results
  */
-async function searchFlightsWithProgress({ departureAirport, arrivalAirport, departureDate, returnDate, proxyConfig, onProgress }) {
+async function searchFlightsWithProgress({
+  departureAirport,
+  arrivalAirport,
+  departureDate,
+  returnDate,
+  proxyConfig,
+  onProgress = () => {},
+  website = { name: "Skyscanner", url: "https://www.skyscanner.com" }
+}) {
   let browser = null;
 
   try {
-    // Create BrowserBase session
+    // Create BrowserBase session with proxy config
     onProgress({ status: 'creating_session', message: 'Creating BrowserBase session...' });
     console.log('Creating BrowserBase session...');
 
@@ -286,7 +603,6 @@ async function searchFlightsWithProgress({ departureAirport, arrivalAirport, dep
     // Try to get live view URL if not already available
     let publicLiveUrl = liveViewUrl || debuggerUrl;
     if (!publicLiveUrl || publicLiveUrl.includes('/sessions/')) {
-      // Try fetching session details to get public live URL
       const fetchedLiveUrl = await getLiveViewUrl(sessionId);
       if (fetchedLiveUrl) {
         publicLiveUrl = fetchedLiveUrl;
@@ -297,143 +613,192 @@ async function searchFlightsWithProgress({ departureAirport, arrivalAirport, dep
     // Send session info immediately
     onProgress({ 
       status: 'session_created', 
-      message: 'Session created, connecting to browser...',
+      message: 'Browser session created',
+      minionId: 1,
       sessionId,
-      debuggerUrl: publicLiveUrl 
+      debuggerUrl: publicLiveUrl,
+      departureDate,
+      returnDate
     });
 
-    // Connect to BrowserBase using Playwright
+    // Connect to browser using Playwright
+    onProgress({ status: 'connecting', message: 'Connecting to browser...', minionId: 1 });
     browser = await chromium.connectOverCDP(connectUrl);
     const context = browser.contexts()[0];
     const page = context.pages()[0] || await context.newPage();
+    
+    // Prevent new tabs from opening - redirect to current tab instead
+    console.log('Setting up new tab prevention...');
+    
+    // 1️⃣ Intercept new pages (tabs) - only redirect if same domain, ignore cross-domain popups
+    context.on('page', async (newPage) => {
+      try {
+        // Wait for the new page to finish its initial navigation
+        await newPage.waitForLoadState('domcontentloaded').catch(() => {});
 
-    onProgress({ status: 'connected', message: 'Connected to browser, preparing search...' });
+        const targetUrl = newPage.url();
+        const currentUrl = page.url();
+        
+        // Extract domains for comparison
+        const getCurrentDomain = (url) => {
+          try {
+            return new URL(url).hostname;
+          } catch {
+            return '';
+          }
+        };
+        
+        const targetDomain = getCurrentDomain(targetUrl);
+        const currentDomain = getCurrentDomain(currentUrl);
+        
+        // Only redirect if same domain (likely legitimate navigation)
+        if (targetDomain === currentDomain) {
+          console.log(`🔄 Same-domain new tab detected (${targetDomain}), redirecting current tab to:`, targetUrl);
+          
+          // Navigate the *original page* to that URL
+          await page.goto(targetUrl).catch(err => {
+            console.error('Error redirecting to new tab URL:', err.message);
+          });
+        } else {
+          // Different domain - likely popup ad, silently ignore
+          console.log(`🚫 Cross-domain popup blocked: ${targetDomain} (current: ${currentDomain})`);
+        }
+
+        // Always close the unwanted new tab
+        await newPage.close().catch(err => {
+          console.error('Error closing new tab:', err.message);
+        });
+      } catch (error) {
+        console.error('Error handling new page:', error.message);
+      }
+    });
+
+    // 2️⃣ Override window.open to prevent new tabs at the JavaScript level
+    await context.addInitScript(() => {
+      const origOpen = window.open;
+      window.open = function (url, name, specs) {
+        if (url) {
+          // Check if same domain
+          const getCurrentDomain = (urlString) => {
+            try {
+              return new URL(urlString, window.location.href).hostname;
+            } catch {
+              return '';
+            }
+          };
+          
+          const targetDomain = getCurrentDomain(url);
+          const currentDomain = window.location.hostname;
+          
+          if (targetDomain === currentDomain) {
+            console.warn('🔄 window.open intercepted (same domain), navigating current tab to:', url);
+            window.location.href = url;
+          } else {
+            console.warn('🚫 window.open blocked (cross-domain):', url);
+          }
+        }
+        return null;
+      };
+    });
+    
+    console.log('✅ New tab prevention configured');
+    
+    // Store search parameters on page object for use in CAPTCHA handler
+    page._searchParams = {
+      departureAirport,
+      arrivalAirport,
+      departureDate,
+      returnDate
+    };
+
+    onProgress({ status: 'connected', message: 'Connected to browser, preparing search...', minionId: 1 });
 
     // Setup request interception for faster page loads
     await setupRequestInterception(page, {
       blockAds: true,
-      blockAnalytics: true,
+      blockAnalytics: false,
       blockImages: false,
       logRequests: false
     });
 
-    // Format dates for Expedia
-    const formattedDepartureDate = formatDateForExpedia(departureDate);
-    const formattedReturnDate = formatDateForExpedia(returnDate);
+    // Navigate to flight search website
+    const websiteUrl = website.url;
 
-    // Build Expedia URL
-    const expediaUrl = `https://www.expedia.com/Flights-Search?` +
-      `flight-type=on&` +
-      `mode=search&` +
-      `trip=roundtrip&` +
-      `leg1=from:${departureAirport},to:${arrivalAirport},departure:${formattedDepartureDate}TANYT&` +
-      `leg2=from:${arrivalAirport},to:${departureAirport},departure:${formattedReturnDate}TANYT&` +
-      `passengers=adults:1,children:0,infantinlap:N&` +
-      `options=cabinclass:economy`;
+    console.log(`Navigating to ${website.name} homepage:`, websiteUrl);
+    onProgress({ status: 'navigating', message: `Navigating to ${website.name} homepage...`, minionId: 1 });
 
-    console.log('Navigating to Expedia:', expediaUrl);
-    onProgress({ status: 'navigating', message: 'Navigating to Expedia.com...' });
+    // Navigate to website homepage with timeout and fallback
+    try {
+      await page.goto(websiteUrl, { 
+        waitUntil: 'networkidle',
+        timeout: 8000  // 8 seconds
+      });
+      console.log('✅ Page navigation successful');
+      
+      // Wait a bit for page to stabilize
+      // await page.waitForTimeout(3000);
+    } catch (navError) {
+      console.log('⚠️  Navigation warning:', navError.message);
+      
+      // If navigation fails, try to continue anyway - the page might have partially loaded
+      if (navError.message.includes('Timeout') || navError.message.includes('ERR_TUNNEL')) {
+        console.log('Attempting to continue despite navigation error...');
+        await page.waitForTimeout(3000);  // Give it more time
+        
+        // Check if page has any content
+        const hasContent = await page.evaluate(() => document.body && document.body.children.length > 0);
+        if (!hasContent) {
+          throw new Error('Page failed to load - no content detected');
+        }
+        console.log('✅ Page has content, continuing...');
+      } else {
+        throw navError;  // Re-throw if it's a different error
+      }
+    }
 
-    // Navigate to Expedia search results with extended timeout
-    await page.goto(expediaUrl, { 
-      waitUntil: 'networkidle',
-      timeout: 300000  // 5 minutes - allow plenty of time for slow loads
-    });
-
-    console.log('Page loaded, registering with async search monitor...');
-    onProgress({ status: 'loading', message: 'Registering search with AI monitor...' });
-
-    // Generate unique search ID
-    const searchId = `search_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    // Start AI agent - it will detect CAPTCHAs automatically
+    console.log('✅ Page loaded, starting AI agent...');
     
-    // Register this search with the global monitor
-    // The monitor will check this search in parallel with others every 30s
-    searchMonitor.registerSearch(searchId, page, onProgress);
-    
-    console.log(`✅ Search registered as ${searchId}`);
-    console.log('⏰ Monitor will check this search every 30 seconds (non-blocking)');
-    onProgress({ status: 'loading', message: 'Search registered! Monitor checking every 30s...' });
-    
-    // Wait for search to complete (non-blocking wait)
-    const result = await searchMonitor.waitForSearch(searchId, 1800000); // 30 min timeout
-    
-    console.log(`📊 Search ${searchId} monitoring complete:`, result);
-    
-    // Unregister the search
-    searchMonitor.unregisterSearch(searchId)
-
-    // Small stabilization buffer
-    console.log('\n🎯 Final stabilization...');
-    await page.waitForTimeout(3000);
-
-    console.log('✅ Page ready, starting Gemini Computer Use agent...');
-    onProgress({ status: 'loading', message: 'Page ready! Starting AI agent to extract flight data...' });
-
-    // Use Gemini Computer Use to interact with the page
-    const geminiTask = `You are looking at an Expedia flight search results page. 
-The screenshot shows the FULL PAGE, so you can see all content without scrolling.
-
-Your task is to:
-1. Analyze the full page screenshot to identify all visible flight options
-2. Find the 5 cheapest flight options
-3. For each flight, extract:
-   - airline: The airline name (e.g., "Air Canada", "Air India")
-   - price: The total price (e.g., "$1,177", "$1,331")
-   - duration: Total travel time (e.g., "20h 10m", "23h 35m")
-   - route: Full route description including stops (e.g., "Vancouver (YVR) - Delhi (DEL), 1 stop in LHR")
-   - stops: Number of stops (e.g., "1 stop", "nonstop", "2 stops")
-
-Return the data in JSON format with a "flights" array containing these flight objects, and a "summary" field with a brief description.
-
-Note: You can see the entire page in the screenshot, so scrolling is not necessary unless you need to interact with specific elements.`;
-
-    const geminiResult = await runGeminiAgentLoop({
-      page,
-      task: geminiTask,
-      onProgress
-    });
-
-    // Use Gemini's structured JSON data
-    console.log('Gemini agent complete, processing flight data...');
-    onProgress({ status: 'extracting', message: 'Processing flight data from AI...' });
-    
-    const flights = geminiResult.flightData?.flights || [];
-    
-    // Ensure all flights have the 'type' field
-    flights.forEach(flight => {
-      flight.type = 'Round trip';
-    });
-
-    console.log(`Received ${flights.length} flights from Gemini`);
-
-    // Take screenshot for debugging (optional)
-    await page.screenshot({ 
-      path: '/tmp/expedia-results.png',
-      fullPage: false 
-    }).catch(err => console.log('Screenshot failed:', err));
-
-    await browser.close();
-
-    // Send final results
     onProgress({
-      status: 'completed',
-      flights: flights.length > 0 ? flights : [],
-      message: flights.length > 0 
-        ? `Found ${flights.length} flight options` 
-        : 'No flights found. The page structure may have changed or no results are available.',
-      searchParams: {
-        from: departureAirport,
-        to: arrivalAirport,
-        departureDate: formattedDepartureDate,
-        returnDate: formattedReturnDate
-      },
-      sessionId,
-      debuggerUrl: publicLiveUrl
+      status: 'navigating_with_ai',
+      message: 'AI agent is navigating through the website...',
+      minionId: 1
     });
+    
+    try {
+      return await runFlightSearchWithComputerUse({
+        page,
+        departureAirport,
+        arrivalAirport,
+        departureDate,
+        returnDate,
+        onProgress,
+        sessionId,
+        publicLiveUrl,
+        website
+      });
+    } catch (error) {
+      console.error('Error during AI navigation:', error);
+      onProgress({
+        status: 'error',
+        message: 'AI navigation failed'
+      });
+      
+      await browser.close();
+      await stopBrowserSession(sessionId);
+      
+      throw error;
+    }
+    
+    // If we reach here, something went wrong - both CAPTCHA and no-CAPTCHA paths should return
+    console.error('❌ Unexpected: reached end of function without returning');
+    await browser.close();
+    await stopBrowserSession(sessionId);
+    
+    throw new Error('Flight search failed: no data extracted');
 
   } catch (error) {
     console.error('Error searching flights:', error);
-    
     if (browser) {
       await browser.close().catch(err => console.error('Error closing browser:', err));
     }
@@ -446,6 +811,11 @@ Note: You can see the entire page in the screenshot, so scrolling is not necessa
     throw new Error(`Flight search failed: ${error.message}`);
   }
 }
+
+// searchFlightsWithProgress has been merged into searchFlights
+// searchFlights now accepts an optional onProgress parameter
+// For backwards compatibility, create an alias:
+const searchFlightsWithProgress = searchFlights;
 
 module.exports = {
   searchFlights,

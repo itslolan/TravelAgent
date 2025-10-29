@@ -4,7 +4,7 @@ import { Plane, Calendar, MapPin, MonitorPlay, Settings } from 'lucide-react';
 
 function Home() {
   const navigate = useNavigate();
-  const [searchMode, setSearchMode] = useState('flexible');
+  const [searchMode, setSearchMode] = useState('fixed');
   const [showProxyConfig, setShowProxyConfig] = useState(false);
   const [formData, setFormData] = useState({
     departureAirport: 'YVR',

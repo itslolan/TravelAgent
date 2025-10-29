@@ -3,6 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
 const flightSearchRouter = require('./routes/flightSearch');
+const captchaRouter = require('./routes/captcha');
 
 dotenv.config();
 
@@ -15,6 +16,7 @@ app.use(express.json());
 
 // API Routes
 app.use('/api', flightSearchRouter);
+app.use('/api', captchaRouter);
 
 // Health check
 app.get('/health', (req, res) => {

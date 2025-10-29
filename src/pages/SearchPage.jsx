@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Plane, Loader2, DollarSign, ExternalLink, MonitorPlay, CheckCircle, XCircle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import CaptchaSolvingModal from '../components/CaptchaSolvingModal';
+import { isHumanSolvingEnabled, getCaptchaMode } from '../config/captchaConfig';
 
 function SearchPage() {
   const location = useLocation();
@@ -17,6 +19,19 @@ function SearchPage() {
   const [showMinionHistory, setShowMinionHistory] = useState(false);
   const [captchaActions, setCaptchaActions] = useState([]);
   const [testMode, setTestMode] = useState(isTestMode || false);
+  
+  // CAPTCHA solving state
+  const [showCaptchaModal, setShowCaptchaModal] = useState(false);
+  const [captchaQueue, setCaptchaQueue] = useState([]); // Queue of minions with CAPTCHAs
+  const [currentCaptchaIndex, setCurrentCaptchaIndex] = useState(0);
+  const [captchaSessions, setCaptchaSessions] = useState(new Map());
+  
+  // Current CAPTCHA being solved
+  const currentCaptcha = captchaQueue[currentCaptchaIndex] || null;
+  const totalCaptchas = captchaQueue.length;
+
+  // Prevent duplicate searches (React StrictMode calls useEffect twice in dev)
+  const searchInitiatedRef = useRef(false);
 
   useEffect(() => {
     // If no search params, redirect to home
@@ -24,6 +39,14 @@ function SearchPage() {
       navigate('/');
       return;
     }
+
+    // Prevent duplicate search initialization
+    if (searchInitiatedRef.current) {
+      console.log('⚠️ Search already initiated, skipping duplicate call');
+      return;
+    }
+
+    searchInitiatedRef.current = true;
 
     // Start the search
     startSearch();
@@ -112,6 +135,47 @@ function SearchPage() {
   };
 
   const handleStatusUpdate = (data) => {
+    // Handle CAPTCHA detection
+    if (data.status === 'captcha_detected' && isHumanSolvingEnabled()) {
+      console.log('🤖 CAPTCHA detected for minion:', data.minionId);
+      
+      // Add this minion to the CAPTCHA queue if not already present
+      setCaptchaQueue(prev => {
+        const existingIndex = prev.findIndex(item => item.minionId === data.minionId);
+        if (existingIndex === -1) {
+          // New minion with CAPTCHA
+          const newCaptcha = {
+            minionId: data.minionId,
+            sessionId: data.sessionId,
+            debuggerUrl: data.debuggerUrl,
+            captchaType: data.captchaType || 'unknown',
+            departureDate: data.departureDate || 'Unknown',
+            returnDate: data.returnDate || 'Route'
+          };
+          
+          console.log('➕ Adding minion to CAPTCHA queue:', data.minionId);
+          return [...prev, newCaptcha];
+        }
+        return prev; // Already in queue
+      });
+      
+      // Store the session info for this CAPTCHA
+      setCaptchaSessions(prev => new Map(prev).set(data.minionId, {
+        sessionId: data.sessionId,
+        debuggerUrl: data.debuggerUrl,
+        captchaType: data.captchaType || 'unknown'
+      }));
+      
+      // Show modal if not already shown
+      if (!showCaptchaModal) {
+        console.log('🔓 Opening CAPTCHA modal');
+        setShowCaptchaModal(true);
+        setCurrentCaptchaIndex(0);
+      }
+      
+      return; // Don't process other updates while CAPTCHA modal is shown
+    }
+
     // Handle minion updates
     if (data.minionId) {
       setActiveMinions(prev => {
@@ -190,6 +254,73 @@ function SearchPage() {
     navigate('/');
   };
 
+  // CAPTCHA modal handlers
+  const handleCaptchaContinue = async () => {
+    if (!currentCaptcha) return;
+
+    try {
+      console.log('👤 User completed CAPTCHA for minion:', currentCaptcha.minionId);
+      
+      // Send continue signal to backend
+      await fetch('/api/captcha-solved', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          minionId: currentCaptcha.minionId,
+          sessionId: currentCaptcha.sessionId,
+          solved: true,
+          currentCaptcha: currentCaptchaIndex + 1
+        }),
+      });
+
+      // Update minion status
+      setActiveMinions(prev => prev.map(m =>
+        m.minionId === currentCaptcha.minionId
+          ? { ...m, status: 'captcha_solved', message: 'CAPTCHA solved, continuing search...' }
+          : m
+      ));
+
+      // Remove current CAPTCHA from queue and move to next
+      setCaptchaQueue(prev => prev.filter((_, index) => index !== currentCaptchaIndex));
+      
+      // Check if there are more CAPTCHAs in the queue
+      if (captchaQueue.length > 1) {
+        // Keep modal open, but don't increment index since we removed current item
+        console.log(`👤 CAPTCHA solved for ${currentCaptcha.minionId}, ${captchaQueue.length - 1} more CAPTCHAs remaining`);
+        // Index stays the same since we removed the current item
+      } else {
+        // All CAPTCHAs completed, close modal
+        console.log('👤 All CAPTCHAs completed, closing modal');
+        setShowCaptchaModal(false);
+        setCurrentCaptchaIndex(0);
+        setCaptchaQueue([]);
+      }
+
+    } catch (error) {
+      console.error('❌ Error notifying CAPTCHA completion:', error);
+      // Keep modal open on error
+    }
+  };
+
+  const handleCaptchaClose = () => {
+    // Mark all minions in queue as failed due to CAPTCHA cancellation
+    captchaQueue.forEach(captcha => {
+      setActiveMinions(prev => prev.map(m =>
+        m.minionId === captcha.minionId
+          ? { ...m, isFailed: true, error: 'CAPTCHA solving cancelled by user' }
+          : m
+      ));
+    });
+    
+    // Clear all CAPTCHA state
+    setShowCaptchaModal(false);
+    setCaptchaQueue([]);
+    setCurrentCaptchaIndex(0);
+    setCaptchaSessions(new Map());
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       {/* Header */}
@@ -216,43 +347,15 @@ function SearchPage() {
 
       {/* Main Content */}
       <main className="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Error Display */}
-        {error && (
-          <div className="max-w-4xl mx-auto mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
-            <div className="flex items-start space-x-3">
-              <XCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <h3 className="text-red-900 font-semibold">Search Error</h3>
-                <p className="text-red-700 mt-1">{error}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Status Message */}
-        {loading && statusMessage && (
-          <div className="max-w-4xl mx-auto mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-center space-x-3">
-              <Loader2 className="w-5 h-5 text-blue-600 animate-spin flex-shrink-0" />
-              <span className="text-blue-900 font-medium">{statusMessage}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Active Minions Display */}
-        {activeMinions.length > 0 && (
-          <div className="mb-8">
-            <div className="max-w-7xl mx-auto">
-              <div className="flex items-center justify-between mb-4">
+        {/* Two-Column Layout: Live View (Left) + Results (Right) */}
+        {(loading || results) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* LEFT COLUMN: Live Browser View */}
+            <div className="space-y-6">
+              {/* Active Minions Display */}
+              {activeMinions.length > 0 && (
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Active Search Sessions</h3>
-                  <div className="text-sm text-gray-600">
-                    {activeMinions.length} active minion{activeMinions.length !== 1 ? 's' : ''}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 gap-4">
                 {activeMinions.map((minion) => {
                   const isCompleted = completedMinions.includes(minion.minionId);
                   const isFailed = minion.isFailed;
@@ -270,7 +373,6 @@ function SearchPage() {
                           ? 'border-yellow-400 bg-yellow-50'
                           : 'border-indigo-200 bg-white hover:border-indigo-400'
                       }`}
-                      style={{ minHeight: '300px' }}
                     >
                       {/* Minion Header */}
                       <div className={`p-3 ${
@@ -285,9 +387,11 @@ function SearchPage() {
                               Minion #{minion.minionId}
                               {isRetrying && <span className="ml-2 text-yellow-700">(Retrying...)</span>}
                             </p>
-                            <p className="text-xs text-gray-600 mt-1">
-                              {minion.departureDate} → {minion.returnDate}
-                            </p>
+                            {minion.departureDate && minion.returnDate && minion.departureDate !== 'Test' && (
+                              <p className="text-xs text-gray-600 mt-1">
+                                {minion.departureDate} → {minion.returnDate}
+                              </p>
+                            )}
                           </div>
                           {isCompleted && (
                             <CheckCircle className="w-8 h-8 text-green-600 animate-bounce" />
@@ -301,37 +405,41 @@ function SearchPage() {
                         </div>
                       </div>
 
-                      {/* Live Preview */}
+                      {/* Live Preview - 16:9 aspect ratio */}
                       {!isCompleted && !isFailed && minion.debuggerUrl ? (
-                        <div className="relative" style={{ height: '250px' }}>
+                        <div className="relative" style={{ paddingBottom: '56.25%', height: 0 }}>
                           <iframe
                             src={minion.debuggerUrl}
-                            className="w-full h-full"
+                            className="absolute top-0 left-0 w-full h-full"
                             title={`Minion ${minion.minionId} Live Session`}
                             sandbox="allow-same-origin allow-scripts"
                             allow="clipboard-read; clipboard-write"
                           />
-                          <div className={`absolute top-2 right-2 text-white text-xs px-2 py-1 rounded-full flex items-center space-x-1 ${
+                          {/* <div className={`absolute top-2 right-2 text-white text-xs px-2 py-1 rounded-full flex items-center space-x-1 ${
                             isRetrying ? 'bg-yellow-600' : 'bg-blue-600'
                           }`}>
                             <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
                             <span>{isRetrying ? 'RETRY' : 'LIVE'}</span>
-                          </div>
+                          </div> */}
                         </div>
                       ) : isCompleted ? (
-                        <div className="flex items-center justify-center" style={{ height: '250px' }}>
+                        <div className="flex items-center justify-center" style={{ paddingBottom: '56.25%', height: 0, position: 'relative' }}>
+                          <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center">
                           <div className="text-center">
                             <CheckCircle className="w-16 h-16 text-green-600 mx-auto mb-3" />
                             <p className="text-green-700 font-semibold">Search Complete!</p>
                             <p className="text-sm text-gray-600 mt-1">Results collected</p>
                           </div>
+                          </div>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-center" style={{ height: '250px' }}>
+                        <div className="flex items-center justify-center" style={{ paddingBottom: '56.25%', height: 0, position: 'relative' }}>
+                          <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center">
                           <div className="text-center">
                             <XCircle className="w-16 h-16 text-red-600 mx-auto mb-3" />
                             <p className="text-red-700 font-semibold">Search Failed</p>
                             <p className="text-sm text-gray-600 mt-1">{minion.error || 'Timeout after retries'}</p>
+                          </div>
                           </div>
                         </div>
                       )}
@@ -344,12 +452,13 @@ function SearchPage() {
                       )}
                     </div>
                   );
-                })}
-              </div>
-            </div>
+                  })}
+                  </div>
+                </div>
+              )}
 
-            {/* CAPTCHA Actions Log - Only in Test Mode */}
-            {testMode && captchaActions.length > 0 && (
+              {/* CAPTCHA Actions Log - Only in Test Mode */}
+              {testMode && captchaActions.length > 0 && (
               <div className="mt-8 max-w-7xl mx-auto">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
                   <MonitorPlay className="w-5 h-5 mr-2 text-amber-600" />
@@ -413,22 +522,75 @@ function SearchPage() {
                   </div>
                 </div>
               </div>
-            )}
-          </div>
-        )}
-
-        {/* Results Display */}
-        {results && (
-          <div className="max-w-4xl mx-auto">
-            <div className="bg-white rounded-lg shadow-lg p-6">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">Search Complete!</h2>
-              <pre className="bg-gray-100 p-4 rounded overflow-auto">
-                {JSON.stringify(results, null, 2)}
-              </pre>
+              )}
             </div>
+            {/* End of LEFT COLUMN */}
+
+            {/* RIGHT COLUMN: Search Results & Status */}
+            <div className="space-y-6">
+              {/* Status Message */}
+              {loading && statusMessage && (
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex items-center space-x-3">
+                    <Loader2 className="w-5 h-5 text-blue-600 animate-spin flex-shrink-0" />
+                    <span className="text-blue-900 font-medium">{statusMessage}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Display */}
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <div className="flex items-start space-x-3">
+                    <XCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <h3 className="text-red-900 font-semibold">Search Error</h3>
+                      <p className="text-red-700 mt-1">{error}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Results Display */}
+              {results && (
+                <div className="bg-white rounded-lg shadow-lg p-6">
+                  <h2 className="text-2xl font-bold text-gray-900 mb-4">Search Complete!</h2>
+                  <pre className="bg-gray-100 p-4 rounded overflow-auto">
+                    {JSON.stringify(results, null, 2)}
+                  </pre>
+                </div>
+              )}
+
+              {/* Loading State for Results */}
+              {loading && !results && (
+                <div className="bg-white rounded-lg shadow-lg p-6">
+                  <div className="flex items-center justify-center py-12">
+                    <div className="text-center">
+                      <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mx-auto mb-4" />
+                      <p className="text-gray-600">Searching for flights...</p>
+                      <p className="text-sm text-gray-500 mt-2">Results will appear here as they're found</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* End of RIGHT COLUMN */}
           </div>
         )}
       </main>
+
+      {/* CAPTCHA Solving Modal */}
+      <CaptchaSolvingModal
+        isOpen={showCaptchaModal}
+        onClose={handleCaptchaClose}
+        onContinue={handleCaptchaContinue}
+        browserUrl={currentCaptcha?.debuggerUrl || null}
+        captchaCount={totalCaptchas}
+        currentCaptcha={currentCaptchaIndex + 1}
+        minionId={currentCaptcha?.minionId || null}
+        minionRoute={currentCaptcha ? `${currentCaptcha.departureDate} → ${currentCaptcha.returnDate}` : null}
+        useHumanSolving={isHumanSolvingEnabled()}
+      />
     </div>
   );
 }
