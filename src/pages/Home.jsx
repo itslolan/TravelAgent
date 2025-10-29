@@ -4,7 +4,7 @@ import { Plane, Calendar, MapPin, MonitorPlay } from 'lucide-react';
 
 function Home() {
   const navigate = useNavigate();
-  const [searchMode, setSearchMode] = useState('flexible');
+  const [searchMode, setSearchMode] = useState('fixed');
   const [formData, setFormData] = useState({
     departureAirport: 'YVR',
     arrivalAirport: 'DEL',

@@ -71,20 +71,19 @@ async function runComputerUse({ page, task, onProgress = () => {} }) {
     `
   });
   
-  await page.addScriptTag({
-    content: `
-      window.showClickIndicator = function(x, y) {
-        const indicator = document.createElement('div');
-        indicator.className = 'click-indicator';
-        indicator.style.left = x + 'px';
-        indicator.style.top = y + 'px';
-        document.body.appendChild(indicator);
-        
-        setTimeout(() => {
-          indicator.remove();
-        }, 5000);
-      };
-    `
+  // Inject click indicator function using evaluate (bypasses CSP restrictions)
+  await page.evaluate(() => {
+    window.showClickIndicator = function(x, y) {
+      const indicator = document.createElement('div');
+      indicator.className = 'click-indicator';
+      indicator.style.left = x + 'px';
+      indicator.style.top = y + 'px';
+      document.body.appendChild(indicator);
+      
+      setTimeout(() => {
+        indicator.remove();
+      }, 5000);
+    };
   });
   
   // Function to extract clickable elements and their coordinates

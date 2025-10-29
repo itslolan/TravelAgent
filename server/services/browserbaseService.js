@@ -488,9 +488,50 @@ Return the extracted flight data in the structured JSON format with this schema:
     console.log('🤖 AI detected CAPTCHA, waiting for human to solve...');
     
     // The captcha_detected event was already sent via onProgress
-    // Now we need to wait for the human to solve it
-    // For now, return an error - the frontend will show the modal
-    throw new Error('CAPTCHA detected - human intervention required');
+    // Now wait for the human to solve it
+    const captchaInfo = {
+      detected: true,
+      type: result.captcha_type || 'unknown',
+      description: result.description || 'CAPTCHA detected by AI'
+    };
+    
+    // Wait for human to solve CAPTCHA
+    const captchaSolved = await waitForHumanCaptchaSolution(
+      page, 
+      1, // minionId
+      sessionId, 
+      onProgress, 
+      300000, // 5 minutes timeout
+      1 // currentCaptcha
+    );
+    
+    if (!captchaSolved) {
+      throw new Error('CAPTCHA solving timed out');
+    }
+    
+    console.log('✅ CAPTCHA solved, resuming AI navigation...');
+    
+    // After CAPTCHA is solved, restart the computer use agent
+    onProgress({
+      status: 'navigating_with_ai',
+      message: 'CAPTCHA solved! Resuming AI navigation...',
+      minionId: 1
+    });
+    
+    // Restart computer use with the same task
+    return await runComputerUse({
+      page,
+      task: navigationTask,
+      onProgress: (update) => {
+        onProgress({
+          ...update,
+          sessionId,
+          debuggerUrl: publicLiveUrl,
+          departureDate,
+          returnDate
+        });
+      }
+    });
   }
   
   if (result.success && result.data) {
