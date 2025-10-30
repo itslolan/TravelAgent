@@ -52,8 +52,7 @@ async function createEnhancedSession(options = {}) {
     userId = null,
     countryCode = 'US',
     persistContext = true,
-    enableProxies = true,
-    proxyConfig = null
+    enableProxies = true
   } = options;
 
   // Check circuit breaker
@@ -62,46 +61,49 @@ async function createEnhancedSession(options = {}) {
     throw new Error(`Circuit breaker is OPEN. Too many BrowserBase failures. Retry after ${new Date(state.openUntil).toISOString()}`);
   }
 
-  // Configure external proxy if credentials are provided
-  let envProxyConfig = enableProxies;
+  // Configure external proxy with priority: Bright Data > Round Proxies > Built-in
+  let proxySettings = enableProxies;
+  let proxySource = 'BrowserBase Built-in';
 
-  if (enableProxies && process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
-    // Use external proxy from environment variables (e.g., RoundProxies.com)
-    envProxyConfig = [
-      {
-        type: "external",
-        server: process.env.PROXY_SERVER,
-        username: process.env.PROXY_USERNAME,
-        password: process.env.PROXY_PASSWORD
-      }
-    ];
-    console.log('🔒 Using external proxy from env:', process.env.PROXY_SERVER);
-  } else if (enableProxies) {
-    // Use BrowserBase's built-in proxies
-    console.log('🌐 Using BrowserBase built-in proxies');
+  if (enableProxies) {
+    // Check for Bright Data proxy configuration (highest priority)
+    if (process.env.BRIGHTDATA_HOST && process.env.BRIGHTDATA_PORT &&
+        process.env.BRIGHTDATA_USERNAME && process.env.BRIGHTDATA_PASSWORD) {
+      const proxyUrl = `http://${process.env.BRIGHTDATA_USERNAME}:${process.env.BRIGHTDATA_PASSWORD}@${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT}`;
+      proxySettings = [
+        {
+          type: "external",
+          server: proxyUrl
+        }
+      ];
+      proxySource = `Bright Data (${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT})`;
+      console.log('🔒 Using Bright Data proxy:', `${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT}`);
+    }
+    // Check for Round Proxies configuration (fallback)
+    else if (process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
+      proxySettings = [
+        {
+          type: "external",
+          server: process.env.PROXY_SERVER,
+          username: process.env.PROXY_USERNAME,
+          password: process.env.PROXY_PASSWORD
+        }
+      ];
+      proxySource = `Round Proxies (${process.env.PROXY_SERVER})`;
+      console.log('🔒 Using Round Proxies:', process.env.PROXY_SERVER);
+    }
+    else {
+      // Use BrowserBase's built-in proxies
+      console.log('🌐 Using BrowserBase built-in proxies');
+    }
+  } else {
+    proxySource = 'Disabled';
   }
 
   try {
     // Create session with retry logic
     const session = await retryWithBackoff(async () => {
       console.log('🌐 Creating BrowserBase session with enhanced features...');
-
-      // Determine proxy configuration
-      // Priority: UI config > environment config > BrowserBase built-in
-      let proxySettings;
-      if (proxyConfig && proxyConfig.provider !== 'browserbase') {
-        // Custom proxy from UI (Bright Data or other)
-        const { host, port, username, password } = proxyConfig;
-        const proxyUrl = `http://${username}:${password}@${host}:${port}`;
-        console.log(`🔌 Using custom proxy from UI: ${host}:${port}`);
-        proxySettings = {
-          type: 'custom',
-          server: proxyUrl
-        };
-      } else {
-        // Use environment-based proxy config or BrowserBase built-in
-        proxySettings = envProxyConfig;
-      }
 
       const response = await axios.post(
         'https://www.browserbase.com/v1/sessions',
@@ -151,17 +153,7 @@ async function createEnhancedSession(options = {}) {
       console.log('✅ Session created:', response.data.id);
       console.log(`   Context: ${persistContext ? 'Persistent' : 'Temporary'}`);
       console.log(`   Location: ${countryCode}`);
-
-      // Log proxy configuration
-      if (proxyConfig && proxyConfig.provider !== 'browserbase') {
-        console.log(`   Proxy: Custom from UI (${proxyConfig.provider}) - ${proxyConfig.host}:${proxyConfig.port}`);
-      } else if (Array.isArray(envProxyConfig) && envProxyConfig.length > 0) {
-        console.log(`   Proxies: External from env (${envProxyConfig[0].server})`);
-      } else if (enableProxies) {
-        console.log(`   Proxies: BrowserBase Built-in`);
-      } else {
-        console.log(`   Proxies: Disabled`);
-      }
+      console.log(`   Proxy: ${proxySource}`);
       
       // Record success in circuit breaker
       browserbaseCircuitBreaker.record(true);

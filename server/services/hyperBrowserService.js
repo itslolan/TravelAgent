@@ -35,13 +35,27 @@ async function createHyperBrowserSession(options = {}) {
       }
     };
 
-    // Add external proxy if configured
-    if (process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
-      console.log('🔒 Using external proxy:', process.env.PROXY_SERVER);
+    // Add external proxy with priority: Bright Data > Round Proxies
+    let proxySource = 'HyperBrowser Built-in';
+
+    if (process.env.BRIGHTDATA_HOST && process.env.BRIGHTDATA_PORT &&
+        process.env.BRIGHTDATA_USERNAME && process.env.BRIGHTDATA_PASSWORD) {
+      // Use Bright Data proxy (highest priority)
+      const proxyUrl = `http://${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT}`;
+      console.log('🔒 Using Bright Data proxy:', proxyUrl);
+      sessionConfig.useProxy = true;
+      sessionConfig.proxyServer = proxyUrl;
+      sessionConfig.proxyServerUsername = process.env.BRIGHTDATA_USERNAME;
+      sessionConfig.proxyServerPassword = process.env.BRIGHTDATA_PASSWORD;
+      proxySource = `Bright Data (${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT})`;
+    } else if (process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
+      // Use Round Proxies (fallback)
+      console.log('🔒 Using Round Proxies:', process.env.PROXY_SERVER);
       sessionConfig.useProxy = true;
       sessionConfig.proxyServer = process.env.PROXY_SERVER;
       sessionConfig.proxyServerUsername = process.env.PROXY_USERNAME;
       sessionConfig.proxyServerPassword = process.env.PROXY_PASSWORD;
+      proxySource = `Round Proxies (${process.env.PROXY_SERVER})`;
     }
 
     console.log('📋 Session config:', {
@@ -65,6 +79,7 @@ async function createHyperBrowserSession(options = {}) {
     console.log('✅ HyperBrowser session created:', sessionData.id);
     console.log('🔗 WebSocket endpoint:', sessionData.wsEndpoint);
     console.log('👁️  Live view URL:', sessionData.liveUrl);
+    console.log(`   Proxy: ${proxySource}`);
 
     return {
       sessionId: sessionData.id,
