@@ -7,14 +7,15 @@ const { validateProxyHealth, retryWithBackoff, browserbaseCircuitBreaker } = req
 const { createEnhancedSession, setupRequestInterception } = require('./sessionManager');
 const { isHumanSolvingEnabled, logCaptchaEvent, captchaConfig } = require('../config/captchaConfig');
 const { createHyperBrowserSession, stopHyperBrowserSession } = require('./hyperBrowserService');
+const { createBrightDataBrowserSession, stopBrightDataBrowserSession } = require('./brightdataBrowserService');
 
 /**
  * Get the configured browser provider
- * @returns {string} 'browserbase' or 'hyperbrowser'
+ * @returns {string} 'browserbase', 'hyperbrowser', or 'brightdata'
  */
 function getBrowserProvider() {
   const provider = process.env.BROWSER_PROVIDER || 'browserbase';
-  if (!['browserbase', 'hyperbrowser'].includes(provider)) {
+  if (!['browserbase', 'hyperbrowser', 'brightdata'].includes(provider)) {
     console.warn(`⚠️  Invalid BROWSER_PROVIDER: ${provider}, defaulting to 'browserbase'`);
     return 'browserbase';
   }
@@ -302,17 +303,19 @@ async function createBrowserBaseSession(options = {}) {
 
 /**
  * Create a browser session using the configured provider
- * Unified function that works with both BrowserBase and HyperBrowser
+ * Unified function that works with BrowserBase, HyperBrowser, or BrightData
  * @param {Object} options - Session configuration options
  * @returns {Promise<Object>} Session details with connectUrl, sessionId, debuggerUrl
  */
 async function createBrowserSession(options = {}) {
   const provider = getBrowserProvider();
-  
+
   console.log(`🌐 Using browser provider: ${provider.toUpperCase()}`);
-  
+
   if (provider === 'hyperbrowser') {
     return await createHyperBrowserSession(options);
+  } else if (provider === 'brightdata') {
+    return await createBrightDataBrowserSession(options);
   } else {
     return await createBrowserBaseSession(options);
   }
@@ -324,9 +327,11 @@ async function createBrowserSession(options = {}) {
  */
 async function stopBrowserSession(sessionId) {
   const provider = getBrowserProvider();
-  
+
   if (provider === 'hyperbrowser') {
     await stopHyperBrowserSession(sessionId);
+  } else if (provider === 'brightdata') {
+    await stopBrightDataBrowserSession(sessionId);
   } else {
     // BrowserBase sessions auto-close when browser disconnects
     console.log('✅ BrowserBase session will auto-close on disconnect');
