@@ -590,17 +590,18 @@ async function searchFlightsWithProgress({
   let browser = null;
 
   try {
-    // Create BrowserBase session
-    onProgress({ status: 'creating_session', message: 'Creating BrowserBase session...' });
-    console.log('Creating BrowserBase session...');
+    // Create browser session (BrowserBase or HyperBrowser based on BROWSER_PROVIDER)
+    const provider = getBrowserProvider();
+    onProgress({ status: 'creating_session', message: `Creating ${provider} session...` });
+    console.log(`Creating ${provider} session...`);
 
-    const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserBaseSession();
-    console.log('BrowserBase session created:', sessionId);
+    const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserSession();
+    console.log(`${provider} session created:`, sessionId);
     console.log('Live session view:', debuggerUrl);
-    
-    // Try to get live view URL if not already available
+
+    // Try to get live view URL if not already available (BrowserBase only)
     let publicLiveUrl = liveViewUrl || debuggerUrl;
-    if (!publicLiveUrl || publicLiveUrl.includes('/sessions/')) {
+    if (provider === 'browserbase' && (!publicLiveUrl || publicLiveUrl.includes('/sessions/'))) {
       const fetchedLiveUrl = await getLiveViewUrl(sessionId);
       if (fetchedLiveUrl) {
         publicLiveUrl = fetchedLiveUrl;

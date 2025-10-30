@@ -29,6 +29,7 @@ async function createHyperBrowserSession(options = {}) {
       annoyances: options.annoyances !== false, // Default true (block annoyances)
       enableWebRecording: options.enableWebRecording || false,
       timeoutMinutes: options.timeoutMinutes || 30,
+      ignoreCertificateErrors: true, // Ignore SSL/TLS certificate errors
       screen: {
         width: 1440,
         height: 900
