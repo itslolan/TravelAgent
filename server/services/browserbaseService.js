@@ -624,7 +624,17 @@ async function searchFlightsWithProgress({
     browser = await chromium.connectOverCDP(connectUrl);
     const context = browser.contexts()[0];
     const page = context.pages()[0] || await context.newPage();
-    
+
+    // Ignore certificate errors using CDP
+    console.log('Setting up CDP to ignore certificate errors...');
+    try {
+      const client = await context.newCDPSession(page);
+      await client.send('Security.setIgnoreCertificateErrors', { ignore: true });
+      console.log('✅ Certificate errors will be ignored');
+    } catch (error) {
+      console.warn('⚠️  Could not enable certificate error ignoring:', error.message);
+    }
+
     // Prevent new tabs from opening - redirect to current tab instead
     console.log('Setting up new tab prevention...');
     
