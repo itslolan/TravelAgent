@@ -269,8 +269,7 @@ async function createBrowserBaseSession(options = {}) {
       userId: options.userId || null,
       countryCode: options.countryCode || 'US',
       persistContext: options.persistContext !== false, // Default true
-      enableProxies: options.enableProxies !== false,   // Default true
-      proxyConfig: options.proxyConfig || null
+      enableProxies: options.enableProxies !== false   // Default true
     });
 
     const sessionId = sessionData.id;
@@ -585,18 +584,17 @@ async function searchFlightsWithProgress({
   arrivalAirport,
   departureDate,
   returnDate,
-  proxyConfig,
   onProgress = () => {},
   website = { name: "Skyscanner", url: "https://www.skyscanner.com" }
 }) {
   let browser = null;
 
   try {
-    // Create BrowserBase session with proxy config
+    // Create BrowserBase session
     onProgress({ status: 'creating_session', message: 'Creating BrowserBase session...' });
     console.log('Creating BrowserBase session...');
 
-    const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserBaseSession({ proxyConfig });
+    const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserBaseSession();
     console.log('BrowserBase session created:', sessionId);
     console.log('Live session view:', debuggerUrl);
     
