@@ -812,13 +812,7 @@ async function searchFlightsWithProgress({
   }
 }
 
-// searchFlightsWithProgress has been merged into searchFlights
-// searchFlights now accepts an optional onProgress parameter
-// For backwards compatibility, create an alias:
-const searchFlightsWithProgress = searchFlights;
-
 module.exports = {
-  searchFlights,
   searchFlightsWithProgress,
   createBrowserBaseSession,
   getLiveViewUrl
