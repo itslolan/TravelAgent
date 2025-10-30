@@ -22,7 +22,7 @@ router.post('/search-flights', async (req, res) => {
 
     if (searchMode === 'flexible') {
       // Flexible date search
-      const { departureAirport, arrivalAirport, month, year, tripDuration } = req.body;
+      const { departureAirport, arrivalAirport, month, year, tripDuration, proxyProvider } = req.body;
 
       // Validate input
       if (!departureAirport || !arrivalAirport || month === undefined || !year || !tripDuration) {
@@ -32,6 +32,7 @@ router.post('/search-flights', async (req, res) => {
       }
 
       console.log('Flexible search:', { departureAirport, arrivalAirport, month, year, tripDuration });
+      console.log('🔌 Proxy provider:', proxyProvider);
 
       const results = await runFlexibleSearch({
         departureAirport,
@@ -39,6 +40,7 @@ router.post('/search-flights', async (req, res) => {
         month,
         year,
         tripDuration,
+        proxyProvider,
         onProgress: sendUpdate
       });
 
@@ -51,7 +53,7 @@ router.post('/search-flights', async (req, res) => {
 
     } else {
       // Fixed date search - search 3 websites in parallel
-      const { departureAirport, arrivalAirport, departureDate, returnDate } = req.body;
+      const { departureAirport, arrivalAirport, departureDate, returnDate, proxyProvider } = req.body;
 
       // Validate input
       if (!departureAirport || !arrivalAirport || !departureDate || !returnDate) {
@@ -61,6 +63,7 @@ router.post('/search-flights', async (req, res) => {
       }
 
       console.log('Fixed date search - launching 3 minions:', { departureAirport, arrivalAirport, departureDate, returnDate });
+      console.log('🔌 Proxy provider:', proxyProvider);
 
       // Define 3 websites to search in parallel
       const websites = [
@@ -76,6 +79,7 @@ router.post('/search-flights', async (req, res) => {
           arrivalAirport,
           departureDate,
           returnDate,
+          proxyProvider,
           website: { name: website.name, url: website.url },
           onProgress: (update) => {
             // Add minionId to all progress updates
@@ -132,6 +136,8 @@ router.post('/search-flights', async (req, res) => {
 router.post('/test-captcha', async (req, res) => {
   try {
     console.log('🧪 Received CAPTCHA test request');
+    const { proxyProvider } = req.body;
+    console.log('🔌 Proxy provider:', proxyProvider);
 
     // Set up SSE (Server-Sent Events)
     res.setHeader('Content-Type', 'text/event-stream');
@@ -193,6 +199,7 @@ router.post('/test-captcha', async (req, res) => {
     // Call BrowserBase service with progress updates
     await searchFlightsWithProgress({
       ...testParams,
+      proxyProvider,
       onProgress: (update) => {
         // Add test mode flag and forward all updates
         sendUpdate({

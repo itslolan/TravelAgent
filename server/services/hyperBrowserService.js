@@ -9,7 +9,8 @@ const HYPERBROWSER_API_URL = 'https://api.hyperbrowser.ai/api/session';
  */
 async function createHyperBrowserSession(options = {}) {
   const apiKey = process.env.HYPERBROWSER_API_KEY;
-  
+  const proxyProvider = options.proxyProvider || 'brightdata';
+
   if (!apiKey) {
     throw new Error('HYPERBROWSER_API_KEY is not set in environment variables');
   }
@@ -36,27 +37,41 @@ async function createHyperBrowserSession(options = {}) {
       }
     };
 
-    // Add external proxy with priority: Bright Data > Round Proxies
+    // Configure external proxy based on user selection
     let proxySource = 'HyperBrowser Built-in';
 
-    if (process.env.BRIGHTDATA_HOST && process.env.BRIGHTDATA_PORT &&
-        process.env.BRIGHTDATA_USERNAME && process.env.BRIGHTDATA_PASSWORD) {
-      // Use Bright Data proxy (highest priority)
-      const proxyUrl = `http://${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT}`;
-      console.log('🔒 Using Bright Data proxy:', proxyUrl);
-      sessionConfig.useProxy = true;
-      sessionConfig.proxyServer = proxyUrl;
-      sessionConfig.proxyServerUsername = process.env.BRIGHTDATA_USERNAME;
-      sessionConfig.proxyServerPassword = process.env.BRIGHTDATA_PASSWORD;
-      proxySource = `Bright Data (${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT})`;
-    } else if (process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
-      // Use Round Proxies (fallback)
-      console.log('🔒 Using Round Proxies:', process.env.PROXY_SERVER);
-      sessionConfig.useProxy = true;
-      sessionConfig.proxyServer = process.env.PROXY_SERVER;
-      sessionConfig.proxyServerUsername = process.env.PROXY_USERNAME;
-      sessionConfig.proxyServerPassword = process.env.PROXY_PASSWORD;
-      proxySource = `Round Proxies (${process.env.PROXY_SERVER})`;
+    if (proxyProvider !== 'builtin') {
+      if (proxyProvider === 'brightdata') {
+        // Use Bright Data proxy
+        if (process.env.BRIGHTDATA_HOST && process.env.BRIGHTDATA_PORT &&
+            process.env.BRIGHTDATA_USERNAME && process.env.BRIGHTDATA_PASSWORD) {
+          const proxyUrl = `http://${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT}`;
+          console.log('🔒 Using Bright Data proxy:', proxyUrl);
+          sessionConfig.useProxy = true;
+          sessionConfig.proxyServer = proxyUrl;
+          sessionConfig.proxyServerUsername = process.env.BRIGHTDATA_USERNAME;
+          sessionConfig.proxyServerPassword = process.env.BRIGHTDATA_PASSWORD;
+          proxySource = `Bright Data (${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT})`;
+        } else {
+          console.warn('⚠️  Bright Data selected but credentials not found in .env');
+          console.log('🌐 Falling back to HyperBrowser built-in proxies');
+        }
+      } else if (proxyProvider === 'roundproxies') {
+        // Use Round Proxies
+        if (process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
+          console.log('🔒 Using Round Proxies:', process.env.PROXY_SERVER);
+          sessionConfig.useProxy = true;
+          sessionConfig.proxyServer = process.env.PROXY_SERVER;
+          sessionConfig.proxyServerUsername = process.env.PROXY_USERNAME;
+          sessionConfig.proxyServerPassword = process.env.PROXY_PASSWORD;
+          proxySource = `Round Proxies (${process.env.PROXY_SERVER})`;
+        } else {
+          console.warn('⚠️  Round Proxies selected but credentials not found in .env');
+          console.log('🌐 Falling back to HyperBrowser built-in proxies');
+        }
+      }
+    } else {
+      console.log('🌐 Using HyperBrowser built-in proxies (user selected)');
     }
 
     console.log('📋 Session config:', {

@@ -10,6 +10,7 @@ async function runSearch({
   departureDate,
   returnDate,
   minionId,
+  proxyProvider,
   onProgress
 }) {
   try {
@@ -18,6 +19,7 @@ async function runSearch({
       arrivalAirport,
       departureDate,
       returnDate,
+      proxyProvider,
       onProgress
     });
 
@@ -121,6 +123,7 @@ async function runFlexibleSearch({
   month,
   year,
   tripDuration,
+  proxyProvider,
   onProgress
 }) {
   console.log(`\n=== Starting Flexible Search ===`);
@@ -243,6 +246,7 @@ async function runFlexibleSearch({
       departureDate: combo.departureDate,
       returnDate: combo.returnDate,
       minionId,
+      proxyProvider,
       onProgress: handler
     });
 
