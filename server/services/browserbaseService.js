@@ -601,8 +601,12 @@ async function searchFlightsWithProgress({
     onProgress({ status: 'creating_session', message: `Creating ${provider} session...` });
     console.log(`Creating ${provider} session...`);
     console.log(`🔌 Proxy provider: ${proxyProvider}`);
+    console.log(`🌍 Website URL: ${website.url}`);
 
-    const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserSession({ proxyProvider });
+    const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserSession({
+      proxyProvider,
+      websiteUrl: website.url  // Pass website URL for profile-based caching (HyperBrowser)
+    });
     console.log(`${provider} session created:`, sessionId);
     console.log('Live session view:', debuggerUrl);
 
