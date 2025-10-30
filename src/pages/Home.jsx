@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plane, Calendar, MapPin, MonitorPlay } from 'lucide-react';
 
@@ -16,6 +16,17 @@ function Home() {
     year: new Date().getFullYear(),
     tripDuration: 25
   });
+
+  // Proxy provider selection
+  const [proxyProvider, setProxyProvider] = useState(() => {
+    const saved = localStorage.getItem('proxyProvider');
+    return saved || 'brightdata'; // Default to Bright Data
+  });
+
+  // Save proxy provider selection to localStorage
+  useEffect(() => {
+    localStorage.setItem('proxyProvider', proxyProvider);
+  }, [proxyProvider]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -43,13 +54,13 @@ function Home() {
           ...formData
         };
 
-    // Navigate to search page with parameters
-    navigate('/search', { state: { searchParams, testMode: false } });
+    // Navigate to search page with parameters and proxy provider
+    navigate('/search', { state: { searchParams, testMode: false, proxyProvider } });
   };
 
   const handleTestCaptcha = () => {
-    // Navigate to search page in test mode
-    navigate('/search', { state: { searchParams: null, testMode: true } });
+    // Navigate to search page in test mode with proxy provider
+    navigate('/search', { state: { searchParams: null, testMode: true, proxyProvider } });
   };
 
   return (
@@ -104,6 +115,26 @@ function Home() {
                   <span className="text-gray-700 font-medium">Fixed Dates</span>
                 </label>
               </div>
+            </div>
+
+            {/* Proxy Provider Selection */}
+            <div className="mb-6">
+              <label htmlFor="proxyProvider" className="block text-sm font-medium text-gray-700 mb-2">
+                Proxy Provider
+              </label>
+              <select
+                id="proxyProvider"
+                value={proxyProvider}
+                onChange={(e) => setProxyProvider(e.target.value)}
+                className="w-full md:w-64 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+              >
+                <option value="brightdata">Bright Data</option>
+                <option value="roundproxies">Round Proxies</option>
+                <option value="builtin">Built-in (No External Proxy)</option>
+              </select>
+              <p className="mt-2 text-sm text-gray-500">
+                Credentials are loaded from environment variables (.env file)
+              </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

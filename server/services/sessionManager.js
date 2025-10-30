@@ -52,7 +52,8 @@ async function createEnhancedSession(options = {}) {
     userId = null,
     countryCode = 'US',
     persistContext = true,
-    enableProxies = true
+    enableProxies = true,
+    proxyProvider = 'brightdata' // 'brightdata', 'roundproxies', or 'builtin'
   } = options;
 
   // Check circuit breaker
@@ -61,43 +62,52 @@ async function createEnhancedSession(options = {}) {
     throw new Error(`Circuit breaker is OPEN. Too many BrowserBase failures. Retry after ${new Date(state.openUntil).toISOString()}`);
   }
 
-  // Configure external proxy with priority: Bright Data > Round Proxies > Built-in
+  // Configure external proxy based on user selection
   let proxySettings = enableProxies;
   let proxySource = 'BrowserBase Built-in';
 
-  if (enableProxies) {
-    // Check for Bright Data proxy configuration (highest priority)
-    if (process.env.BRIGHTDATA_HOST && process.env.BRIGHTDATA_PORT &&
-        process.env.BRIGHTDATA_USERNAME && process.env.BRIGHTDATA_PASSWORD) {
-      const proxyUrl = `http://${process.env.BRIGHTDATA_USERNAME}:${process.env.BRIGHTDATA_PASSWORD}@${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT}`;
-      proxySettings = [
-        {
-          type: "external",
-          server: proxyUrl
-        }
-      ];
-      proxySource = `Bright Data (${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT})`;
-      console.log('🔒 Using Bright Data proxy:', `${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT}`);
+  if (enableProxies && proxyProvider !== 'builtin') {
+    if (proxyProvider === 'brightdata') {
+      // Use Bright Data proxy
+      if (process.env.BRIGHTDATA_HOST && process.env.BRIGHTDATA_PORT &&
+          process.env.BRIGHTDATA_USERNAME && process.env.BRIGHTDATA_PASSWORD) {
+        const proxyUrl = `http://${process.env.BRIGHTDATA_USERNAME}:${process.env.BRIGHTDATA_PASSWORD}@${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT}`;
+        proxySettings = [
+          {
+            type: "external",
+            server: proxyUrl
+          }
+        ];
+        proxySource = `Bright Data (${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT})`;
+        console.log('🔒 Using Bright Data proxy:', `${process.env.BRIGHTDATA_HOST}:${process.env.BRIGHTDATA_PORT}`);
+      } else {
+        console.warn('⚠️  Bright Data selected but credentials not found in .env');
+        console.log('🌐 Falling back to BrowserBase built-in proxies');
+      }
+    } else if (proxyProvider === 'roundproxies') {
+      // Use Round Proxies
+      if (process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
+        proxySettings = [
+          {
+            type: "external",
+            server: process.env.PROXY_SERVER,
+            username: process.env.PROXY_USERNAME,
+            password: process.env.PROXY_PASSWORD
+          }
+        ];
+        proxySource = `Round Proxies (${process.env.PROXY_SERVER})`;
+        console.log('🔒 Using Round Proxies:', process.env.PROXY_SERVER);
+      } else {
+        console.warn('⚠️  Round Proxies selected but credentials not found in .env');
+        console.log('🌐 Falling back to BrowserBase built-in proxies');
+      }
     }
-    // Check for Round Proxies configuration (fallback)
-    else if (process.env.PROXY_SERVER && process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
-      proxySettings = [
-        {
-          type: "external",
-          server: process.env.PROXY_SERVER,
-          username: process.env.PROXY_USERNAME,
-          password: process.env.PROXY_PASSWORD
-        }
-      ];
-      proxySource = `Round Proxies (${process.env.PROXY_SERVER})`;
-      console.log('🔒 Using Round Proxies:', process.env.PROXY_SERVER);
-    }
-    else {
-      // Use BrowserBase's built-in proxies
-      console.log('🌐 Using BrowserBase built-in proxies');
-    }
-  } else {
+  } else if (proxyProvider === 'builtin') {
+    console.log('🌐 Using BrowserBase built-in proxies (user selected)');
+  } else if (!enableProxies) {
     proxySource = 'Disabled';
+  } else {
+    console.log('🌐 Using BrowserBase built-in proxies');
   }
 
   try {

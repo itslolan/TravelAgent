@@ -584,6 +584,7 @@ async function searchFlightsWithProgress({
   arrivalAirport,
   departureDate,
   returnDate,
+  proxyProvider = 'brightdata',
   onProgress = () => {},
   website = { name: "Skyscanner", url: "https://www.skyscanner.com" }
 }) {
@@ -594,8 +595,9 @@ async function searchFlightsWithProgress({
     const provider = getBrowserProvider();
     onProgress({ status: 'creating_session', message: `Creating ${provider} session...` });
     console.log(`Creating ${provider} session...`);
+    console.log(`🔌 Proxy provider: ${proxyProvider}`);
 
-    const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserSession();
+    const { sessionId, connectUrl, debuggerUrl, liveViewUrl } = await createBrowserSession({ proxyProvider });
     console.log(`${provider} session created:`, sessionId);
     console.log('Live session view:', debuggerUrl);
 
