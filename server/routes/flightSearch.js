@@ -62,17 +62,16 @@ router.post('/search-flights', async (req, res) => {
         });
       }
 
-      console.log('Fixed date search - launching 3 minions:', { departureAirport, arrivalAirport, departureDate, returnDate });
+      console.log('Fixed date search - launching 2 minions:', { departureAirport, arrivalAirport, departureDate, returnDate });
       console.log('🔌 Proxy provider:', proxyProvider);
 
-      // Define 3 websites to search in parallel
+      // Define 2 websites to search in parallel
       const websites = [
         { name: 'Skyscanner', url: 'https://www.skyscanner.com', minionId: 1 },
-        { name: 'Expedia', url: 'https://www.expedia.com', minionId: 2 },
-        { name: 'Google Flights', url: 'https://www.google.com/travel/flights', minionId: 3 }
+        { name: 'Google Flights', url: 'https://www.google.com/travel/flights', minionId: 2 }
       ];
 
-      // Launch all 3 searches in parallel
+      // Launch all searches in parallel
       const searchPromises = websites.map(website =>
         searchFlightsWithProgress({
           departureAirport,
